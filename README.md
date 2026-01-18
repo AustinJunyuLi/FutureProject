@@ -1,0 +1,230 @@
+# Futures Curve Pipeline
+
+Deterministic expiry-ranked futures curve (F1..F12) construction, spread analytics (S1..S11), roll-timing metrics, and execution-aware backtests for CME/COMEX-style contracts.
+
+## What’s in this repo
+
+- Full source code for the pipeline (Stages 0–4), tests, and CLI.
+- A tracked analysis report: `research_outputs/report/HG_Analysis_Results_Report.pdf`.
+- Raw data and large generated outputs are **not** committed to Git (see Data Setup).
+
+## Key conventions (CME/COMEX)
+
+- Exchange timezone: `US/Central` (CT)
+- Trade date boundary: **17:00 CT**
+- Daily maintenance break: **16:00–16:59 CT** (treated as QC-only; often filtered from analysis)
+- Curve labels: **F1..F12 by expiry timestamp only** (never by liquidity)
+- Spreads: `S1 = F2 - F1`, …, `S11 = F12 - F11`
+  - Stored in raw price units (e.g., USD/lb for HG)
+  - Normalized versions `S*_pct` are also produced for descriptive analytics
+
+## Installation
+
+Editable install:
+
+```bash
+pip install -e .
+```
+
+### Required optional dependencies
+
+Several pipeline stages rely on optional pandas engines and exchange calendars. For end-to-end execution you should install:
+
+- `pyarrow` (or `fastparquet`) for Parquet read/write
+- `pandas-market-calendars` for CME exchange business-day schedules (used for DTE, EOM labeling, expiry ranking)
+
+These are declared in `pyproject.toml`.
+
+If `pandas-market-calendars` is missing, the code falls back to a deterministic Mon–Fri calendar (holidays ignored). This is adequate for unit tests and local development, but is **not** appropriate for reproducing research numbers.
+
+## Data setup (no Git / no upload)
+
+We do **not** commit raw data (20+ GB) to GitHub. Each collaborator should place the data locally and point the config to it.
+
+### Expected directory structure
+
+The Stage 1 file scanner expects commodity folders under a single root:
+
+```
+/path/to/organized_data/
+  copper/   # HG
+  gold/     # GC
+  silver/   # SI
+  crude_oil/# CL
+  natural_gas/ # NG
+  corn/     # ZC
+  soybeans/ # ZS
+  wheat/    # ZW
+```
+
+### Expected file pattern
+
+Each file is a 1‑minute OHLCV TXT/CSV with **no header** and these columns:
+
+```
+(timestamp, open, high, low, close, volume)
+```
+
+Filename pattern (per `FileScanner`):
+
+```
+{SYMBOL}_{MONTH_CODE}{YY}_1min.txt
+# Example: HG_G22_1min.txt
+```
+
+Timestamps are **naive** strings in `YYYY-MM-DD HH:MM:SS`. The pipeline infers the raw timezone (commonly `US/Eastern` or `UTC`) by minimizing activity during the CME maintenance hour when converted to CT.
+
+### Pointing the pipeline at your data
+
+Option A — override in config (recommended):
+
+Create/edit `config/local_paths.yaml` (gitignored):
+
+```yaml
+raw_data_root: "/path/to/organized_data"
+
+# Commodity-specific paths (optional)
+copper: "${raw_data_root}/copper"
+# ... others as needed
+```
+
+Then update `config/default.yaml` to reference the local path, or pass it directly in the CLI:
+
+```bash
+python -m futures_curve.cli stage1 --symbol HG --input /path/to/organized_data --output data_parquet
+```
+
+Option B — edit `config/default.yaml`:
+
+```yaml
+paths:
+  raw_data: "/path/to/organized_data"
+```
+
+## Usage (end‑to‑end)
+
+Run the full pipeline (Stages 0–4) for HG using the default config:
+
+```bash
+python -m futures_curve.cli run --config config/default.yaml
+```
+
+Or run stages explicitly:
+
+```bash
+python -m futures_curve.cli stage0 --symbol HG --output metadata
+python -m futures_curve.cli stage1 --symbol HG --input /path/to/organized_data --output data_parquet
+python -m futures_curve.cli stage2 --symbol HG --data data_parquet
+python -m futures_curve.cli stage3 --symbol HG --data data_parquet
+python -m futures_curve.cli stage4 --symbol HG --data data_parquet --strategies dte,eom
+```
+
+Build reports:
+
+```bash
+python -m futures_curve.cli report --symbol HG --data data_parquet --out research_outputs --report-type both
+```
+
+The CLI entrypoint also works once installed:
+
+```bash
+futures-curve --help
+```
+
+## Configuration
+
+Configuration is YAML-based. See `config/default.yaml`.
+
+Key fields:
+
+- `paths.raw_data`: root directory of raw 1-minute files
+- `paths.output_parquet`: stage outputs (parquet)
+- `paths.metadata`: expiry tables, contract specs
+- `commodities`: list of symbols to process
+- `ingestion.*`: chunk size, timezone inference settings, trade date cutoff
+- `curve.*`: max contracts, min DTE threshold
+- `roll.*`: roll thresholds, smoothing, persistence
+- `backtest.*`: slippage, commissions, tick size/value, capital, risk controls
+
+## Pipeline stage overview
+
+- **Stage 0**: expiry schedule + contract specs + trading calendar
+- **Stage 1**: parse raw 1-minute data; aggregate to hourly buckets and daily bars
+- **Stage 2**: deterministic curve panel (F1..F12), roll share/events, spreads
+- **Stage 3**: analytics (DTE profiles, EOM seasonality, roll event studies, diagnostics)
+- **Stage 4**: backtests (DTE-trigger + EOM)
+
+## Technical implementation details (from the technical report)
+
+### Data source and format
+
+- **Source:** CME Group via data vendor (1‑minute OHLCV bars)
+- **Coverage:** All listed contract months (2008–2024 in the research sample)
+- **Format:** CSV/TXT, no header, columns: `timestamp, open, high, low, close, volume`
+
+### Time handling and trade date
+
+- All analytics are normalized to **US/Central**.
+- The **trade date** boundary is **17:00 CT** (CME Globex reopen).
+- The **maintenance hour** is **16:00–16:59 CT**, stored as bucket 0 for QC.
+- Raw timestamps are naive and can be vendor‑specific; the pipeline infers raw timezone by minimizing “maintenance hour leakage.”
+
+### Bucket schema
+
+Buckets are defined in exchange time (CT):
+
+- 0: 16:00–16:59 (maintenance, QC only)
+- 1–7: 09:00–15:59 (US session hours)
+- 8: 17:00–20:59 (post‑reopen)
+- 9: 21:00–02:59 (overnight)
+- 10: 03:00–08:59 (pre‑US)
+
+### Expiry and deterministic curve construction
+
+- Expiries are calculated using CME business days (via `pandas-market-calendars`).
+- **Eligibility:** contract is included only if `expiry_ts_utc > as_of_ts_utc`.
+- **Ranking:** F1..F12 are assigned **strictly by expiry timestamp**, never by liquidity.
+- Missing prints at a timestamp yield `NaN` price and `0` volume (no forward fill).
+
+### Spreads and normalization
+
+- Spreads are defined as `S1 = F2 − F1`, `S2 = F3 − F2`, …, `S11 = F12 − F11`.
+- Normalized spreads (`S*_pct`) are computed as `S* / F*`.
+- Rolling z‑scores are computed using **causal** windows (backward‑looking only).
+
+### Roll detection (liquidity migration proxy)
+
+- Volume share: `s(t) = V2 / (V1 + V2)`.
+- Thresholds (defaults): start 0.25, peak 0.50, end 0.75.
+- **Persistence:** requires consecutive confirmations (causal event timing).
+- **Smoothing:** causal rolling mean over last K observations.
+- Roll events are stored at both bucket and daily frequency; daily uses the last US‑session bucket for that trade date.
+
+### Stage 3 analytics
+
+- **EOM labels** are computed using CME business days (not calendar days).
+- Daily EOM dataset uses US‑session buckets only (1–7), and avoids mixing near/far pairs intra‑day.
+- Roll event study anchors on `roll_peak_trade_date` (fallback to `roll_start_trade_date` if missing).
+
+### Backtests (Stage 4)
+
+- Execution is **next‑bucket** by default (no same‑bucket fills).
+- Costs: slippage in ticks, commission per contract, tick size/value.
+- Optional risk controls: stop loss, max holding days, contract‑change roll rules.
+
+## Validation / sanity checks
+
+- `pytest -q` should pass after install.
+- Stage 1 QC report flags OHLC consistency and maintenance-hour leakage.
+- Bucket 0 activity should be near zero in clean data.
+
+## Outputs
+
+- `metadata/`: calendars and expiry tables (generated; not committed)
+- `data_parquet/`: bucket data, curve panel, spreads, roll events, trades/backtests (generated; not committed)
+- `research_outputs/`: figures, tables, and reports (generated; only one PDF tracked)
+- Tracked report: `research_outputs/report/HG_Analysis_Results_Report.pdf`
+
+## Notes
+
+- Plotting can trip OpenMP/MKL shared‑memory issues on some systems; the pipeline sets `MKL_THREADING_LAYER=SEQUENTIAL` defensively in plotting/reporting code. If you still see MKL/OpenMP errors, try exporting it in your shell before running.

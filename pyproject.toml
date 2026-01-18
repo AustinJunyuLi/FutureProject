@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "futures-curve"
+version = "0.1.0"
+description = "Futures curve construction and analysis pipeline"
+authors = [{name = "Research Team"}]
+readme = "README.md"
+requires-python = ">=3.9"
+
+# NOTE: Several pipeline modules rely on optional-but-practically-required
+# libraries (e.g., pandas-market-calendars for CME business days and
+# pyarrow/fastparquet for parquet IO). They are listed here so that a
+# fresh install can run the CLI and tests as documented.
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "click>=8.0.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.65.0",
+    "pytz>=2023.3",
+    "pandas-market-calendars>=4.4.0",
+    "pyarrow>=14.0.0",
+]
+
+[project.scripts]
+futures-curve = "futures_curve.cli:main"
+
+[tool.pytest.ini_options]
+addopts = "-v --tb=short"
+testpaths = ["tests"]
+pythonpath = ["src"]

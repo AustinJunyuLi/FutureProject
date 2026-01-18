@@ -1,0 +1,60 @@
+# Futures Curve Pipeline Configuration
+
+# Data paths
+paths:
+  raw_data: "/home/austinli/futures_data/organized_data"
+  output_parquet: "data_parquet"
+  metadata: "metadata"
+  research_outputs: "research_outputs"
+
+# Commodities to process
+commodities:
+  - HG  # Copper
+
+# Stage 1: Ingestion settings
+ingestion:
+  chunk_size: 100000  # Rows per chunk for streaming
+  exchange_timezone: "US/Central"  # CME
+  raw_timezone: "auto"  # infer from data (common vendor encoding: US/Eastern)
+  trade_date_cutoff: "17:00"  # CME Globex trade date boundary (CT)
+  file_pattern: "{symbol}_{month_code}{year}_1min.txt"
+
+# Stage 2: Curve construction
+curve:
+  max_contracts: 12  # F1 through F12
+  min_dte_threshold: 0  # Exclude contracts at/past expiry (strict > 0)
+
+# Roll detection parameters
+roll:
+  # Volume share s(t) = V2/(V1+V2) computed from deterministic F1/F2 labels
+  start_threshold: 0.25
+  peak_threshold: 0.50
+  end_threshold: 0.75
+  persistence_bucket: 2
+  persistence_daily: 1
+  smoothing_window_bucket: 3
+  smoothing_window_daily: 1
+  min_total_volume: 1.0
+
+# Stage 4: Backtest parameters
+backtest:
+  slippage_ticks: 1  # ticks per fill per leg (2 legs per side)
+  commission_per_contract: 2.50  # per contract per side
+  tick_size: 0.0005
+  tick_value: 12.50
+  initial_capital: 100000
+  stop_loss_usd: 100  # optional; set null to disable
+
+# Bucket definitions (US/Central time)
+buckets:
+  0: {start: "16:00", end: "16:59", desc: "Maintenance hour (QC only)"}
+  1: {start: "09:00", end: "09:59", desc: "US session hour 1"}
+  2: {start: "10:00", end: "10:59", desc: "US session hour 2"}
+  3: {start: "11:00", end: "11:59", desc: "US session hour 3"}
+  4: {start: "12:00", end: "12:59", desc: "US session hour 4"}
+  5: {start: "13:00", end: "13:59", desc: "US session hour 5"}
+  6: {start: "14:00", end: "14:59", desc: "US session hour 6"}
+  7: {start: "15:00", end: "15:59", desc: "US session hour 7"}
+  8: {start: "17:00", end: "20:59", desc: "Post reopen (Asia/Europe overlap)"}
+  9: {start: "21:00", end: "02:59", desc: "Overnight"}
+  10: {start: "03:00", end: "08:59", desc: "Pre-US session"}

@@ -1,0 +1,264 @@
+"""Stage 4 Pipeline: Strategy backtesting.
+
+Runs backtests for various strategies and generates performance reports.
+"""
+
+from pathlib import Path
+from typing import Optional, List
+import pandas as pd
+from datetime import datetime
+
+from .backtester import Backtester, run_backtest
+from .execution import ExecutionConfig
+from .strategies import (
+    Strategy,
+    DTEStrategy,
+    LiquidityTriggerStrategy,
+    HybridStrategy,
+    EOMStrategy,
+    get_strategy,
+)
+from .performance import PerformanceAnalyzer, print_performance_report
+
+
+class Stage4Pipeline:
+    """Complete Stage 4 backtesting pipeline."""
+
+    def __init__(
+        self,
+        data_dir: str | Path,
+        config: Optional[ExecutionConfig] = None,
+        risk_config: Optional[dict] = None,
+    ):
+        """Initialize pipeline.
+
+        Args:
+            data_dir: Base data directory
+            config: Execution configuration
+        """
+        self.data_dir = Path(data_dir)
+        self.config = config or ExecutionConfig()
+
+        # Risk/discipline controls (kept separate from ExecutionConfig)
+        risk_config = risk_config or {}
+        self.stop_loss_usd = risk_config.get('stop_loss_usd')
+        self.max_holding_bdays = risk_config.get('max_holding_bdays')
+        self.auto_roll_on_contract_change = risk_config.get('auto_roll_on_contract_change', True)
+        self.allow_same_bucket_execution = risk_config.get('allow_same_bucket_execution', False)
+
+    def process_symbol(
+        self,
+        symbol: str,
+        strategies: Optional[List[str]] = None,
+        verbose: bool = True,
+    ) -> dict:
+        """Run all backtests for a symbol.
+
+        Args:
+            symbol: Commodity symbol
+            strategies: List of strategy names (default: all)
+            verbose: Print progress
+
+        Returns:
+            Dictionary with backtest results
+        """
+        start_time = datetime.now()
+
+        if strategies is None:
+            strategies = ["dte", "eom"]  # Default strategies
+
+        if verbose:
+            print(f"\nStage 4: Backtesting {symbol}")
+            print("=" * 60)
+
+        results = {"symbol": symbol, "strategies": {}}
+
+        for strategy_name in strategies:
+            if verbose:
+                print(f"\n  Running {strategy_name} strategy...")
+
+            try:
+                result = run_backtest(
+                    self.data_dir,
+                    symbol,
+                    strategy_name,
+                    execution_config={
+                        "slippage_ticks": self.config.slippage_ticks,
+                        "tick_size": self.config.tick_size,
+                        "tick_value": self.config.tick_value,
+                        "commission_per_contract": self.config.commission_per_contract,
+                        "initial_capital": self.config.initial_capital,
+                    },
+                    stop_loss_usd=self.stop_loss_usd,
+                    max_holding_bdays=self.max_holding_bdays,
+                    allow_same_bucket_execution=self.allow_same_bucket_execution,
+                    auto_roll_on_contract_change=self.auto_roll_on_contract_change,
+                )
+
+                results["strategies"][strategy_name] = result
+
+                if verbose and result.get("report"):
+                    report = result["report"]
+                    print(f"    Trades: {report.get('total_trades', 0)}")
+                    print(f"    Win Rate: {report.get('win_rate', 0):.1f}%")
+                    print(f"    Total P&L: ${report.get('total_pnl', 0):,.2f}")
+                    print(f"    Sharpe: {report.get('sharpe_ratio', 0):.2f}")
+
+            except Exception as e:
+                if verbose:
+                    print(f"    Error: {e}")
+                results["strategies"][strategy_name] = {"status": "error", "error": str(e)}
+
+        # Save results
+        self._save_results(symbol, results)
+
+        elapsed = (datetime.now() - start_time).total_seconds()
+        results["elapsed_seconds"] = round(elapsed, 2)
+
+        if verbose:
+            print(f"\nCompleted {symbol} backtesting in {elapsed:.1f}s")
+
+        return results
+
+    def _save_results(self, symbol: str, results: dict) -> None:
+        """Save backtest results to files.
+
+        Args:
+            symbol: Commodity symbol
+            results: Results dictionary
+        """
+        output_dir = self.data_dir / "trades" / symbol
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        for strategy_name, result in results.get("strategies", {}).items():
+            if result.get("status") == "error":
+                continue
+
+            # Save trades
+            trades = result.get("trades")
+            if trades is not None and len(trades) > 0:
+                trades.to_parquet(
+                    output_dir / f"{strategy_name}_trades.parquet",
+                    index=False,
+                )
+
+            # Save equity curve
+            equity = result.get("equity_curve")
+            if equity is not None and len(equity) > 0:
+                equity.to_parquet(
+                    output_dir / f"{strategy_name}_equity.parquet",
+                    index=False,
+                )
+
+        # Save summary
+        summary_records = []
+        for strategy_name, result in results.get("strategies", {}).items():
+            report = result.get("report", {})
+            summary_records.append({
+                "symbol": symbol,
+                "strategy": strategy_name,
+                "total_trades": report.get("total_trades", 0),
+                "win_rate": report.get("win_rate", 0),
+                "total_pnl": report.get("total_pnl", 0),
+                "sharpe_ratio": report.get("sharpe_ratio", 0),
+                "max_drawdown_pct": report.get("max_drawdown_pct", 0),
+                "profit_factor": report.get("profit_factor", 0),
+            })
+
+        if summary_records:
+            summary_df = pd.DataFrame(summary_records)
+            summary_df.to_parquet(output_dir / "summary.parquet", index=False)
+
+    def run_cost_sensitivity(
+        self,
+        symbol: str,
+        strategy_name: str = "dte",
+        slippage_range: Optional[List[int]] = None,
+        verbose: bool = True,
+    ) -> pd.DataFrame:
+        """Run cost sensitivity analysis.
+
+        Args:
+            symbol: Commodity symbol
+            strategy_name: Strategy to test
+            slippage_range: List of slippage tick values
+            verbose: Print progress
+
+        Returns:
+            DataFrame with results for each slippage level
+        """
+        if slippage_range is None:
+            slippage_range = [0, 1, 2, 3, 5]
+
+        results = []
+
+        for slippage in slippage_range:
+            if verbose:
+                print(f"  Testing slippage = {slippage} ticks...")
+
+            result = run_backtest(
+                self.data_dir,
+                symbol,
+                strategy_name,
+                execution_config={
+                    "slippage_ticks": slippage,
+                    "tick_size": self.config.tick_size,
+                    "tick_value": self.config.tick_value,
+                    "commission_per_contract": self.config.commission_per_contract,
+                    "initial_capital": self.config.initial_capital,
+                },
+                stop_loss_usd=self.stop_loss_usd,
+                max_holding_bdays=self.max_holding_bdays,
+                allow_same_bucket_execution=self.allow_same_bucket_execution,
+                auto_roll_on_contract_change=self.auto_roll_on_contract_change,
+            )
+
+            report = result.get("report", {})
+            results.append({
+                "slippage_ticks": slippage,
+                "total_pnl": report.get("total_pnl", 0),
+                "total_costs": report.get("total_costs", 0),
+                "win_rate": report.get("win_rate", 0),
+                "sharpe_ratio": report.get("sharpe_ratio", 0),
+            })
+
+        return pd.DataFrame(results)
+
+
+def run_stage4(
+    data_dir: str,
+    symbols: list[str],
+    strategies: Optional[List[str]] = None,
+    execution_config: Optional[dict] = None,
+) -> dict:
+    """Run Stage 4 pipeline for specified symbols.
+
+    Args:
+        data_dir: Base data directory
+        symbols: List of commodity symbols
+        strategies: List of strategies to run
+
+    Returns:
+        Dictionary with results per symbol
+    """
+    if execution_config:
+        from dataclasses import fields
+
+        allowed = {f.name for f in fields(ExecutionConfig)}
+        filtered = {k: v for k, v in execution_config.items() if k in allowed}
+        config_obj = ExecutionConfig(**filtered)
+    else:
+        config_obj = None
+    risk_cfg: dict = {}
+    if execution_config:
+        risk_keys = {"stop_loss_usd", "max_holding_bdays", "auto_roll_on_contract_change", "allow_same_bucket_execution"}
+        risk_cfg = {k: v for k, v in execution_config.items() if k in risk_keys}
+
+    pipeline = Stage4Pipeline(data_dir, config=config_obj, risk_config=risk_cfg)
+
+    results = {}
+    for symbol in symbols:
+        result = pipeline.process_symbol(symbol, strategies=strategies)
+        results[symbol] = result
+
+    return results
