@@ -10,7 +10,9 @@ from futures_curve.stage4.execution import (
     ExecutionConfig,
     get_execution_price,
 )
+from futures_curve.stage4.backtester import Backtester
 from futures_curve.stage4.strategies import (
+    Strategy,
     DTEStrategy,
     EOMStrategy,
     Signal,
@@ -259,3 +261,48 @@ class TestPerformanceAnalyzer:
 
         stats = analyzer.compute_trade_stats(trades)
         assert abs(stats["profit_factor"] - 2.0) < 1e-6
+
+
+def test_backtester_auto_roll_unpriced_closes_trade() -> None:
+    """Regression: contract-change with missing prices must not orphan open trades."""
+
+    class OneShotEntryStrategy(Strategy):
+        def __init__(self):
+            super().__init__("one_shot_entry")
+
+        def generate_signals(self, data: pd.DataFrame, **kwargs):  # type: ignore[override]
+            first = data.iloc[0]
+            return [
+                Signal(
+                    date=pd.to_datetime(first["trade_date"]).date(),
+                    bucket=int(first["bucket"]),
+                    direction=1,
+                    metadata={"action": "entry"},
+                )
+            ]
+
+    df = pd.DataFrame(
+        [
+            # signal row (executes next observation)
+            {"trade_date": "2024-01-01", "bucket": 1, "S1": 0.10, "S1_near": "A", "S1_far": "B"},
+            # execution row (opens position)
+            {"trade_date": "2024-01-01", "bucket": 2, "S1": 0.12, "S1_near": "A", "S1_far": "B"},
+            # temporarily unpriced but still same spread identity
+            {"trade_date": "2024-01-01", "bucket": 3, "S1": float("nan"), "S1_near": "A", "S1_far": "B"},
+            # contract changes while unpriced -> must close using last priced mark
+            {"trade_date": "2024-01-01", "bucket": 4, "S1": float("nan"), "S1_near": "C", "S1_far": "D"},
+        ]
+    )
+    df["trade_date"] = pd.to_datetime(df["trade_date"])
+
+    bt = Backtester(
+        df,
+        config=ExecutionConfig(slippage_ticks=1, tick_size=0.01, tick_value=10.0, commission_per_contract=1.0),
+    )
+    res = bt.run_strategy(OneShotEntryStrategy(), spread_col="S1", auto_roll_on_contract_change=True)
+    assert res["status"] == "success"
+
+    trades = res["trades"]
+    assert len(trades) == 1
+    assert set(trades["status"]) == {"closed"}
+    assert trades.iloc[0]["exit_reason"] == "auto_roll_unpriced"

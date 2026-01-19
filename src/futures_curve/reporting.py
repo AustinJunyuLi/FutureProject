@@ -64,8 +64,9 @@ CLI_COMMANDS = {
         "description": "Generate PDF reports from pipeline outputs",
         "options": [
             ("--symbol", "Commodity symbol (e.g., HG)"),
+            ("--data", "Data directory (parquet outputs)"),
+            ("--out", "Research outputs directory"),
             ("--report-type", "Report type: technical, analysis, or both"),
-            ("--no-compile", "Generate .tex only, skip PDF compilation"),
         ],
         "example": "python -m futures_curve.cli report --symbol HG --report-type both",
     },
@@ -87,17 +88,17 @@ DEFAULT_CONFIG = {
     ],
     "Backtesting Parameters": [
         ("slippage_ticks", "1", "Slippage per fill in tick units"),
-        ("commission", "2.50", "Commission per contract per side (USD)"),
+        ("commission_per_contract", "2.50", "Commission per contract per side (USD)"),
         ("tick_value", "12.50", "Dollar value per tick (HG)"),
     ],
     "DTE Strategy": [
-        ("entry_dte", "20", "Enter position when F1 DTE reaches this value"),
-        ("exit_dte", "5", "Exit position when F1 DTE reaches this value"),
-        ("direction", "short", "Trade direction (long/short spread)"),
+        ("entry_dte", "15", "Enter when 5 < F1_dte_bdays <= entry_dte (executed next observation)"),
+        ("exit_dte", "5", "Exit when F1_dte_bdays <= exit_dte (executed next observation)"),
+        ("direction", "long", "Trade direction (long/short spread)"),
     ],
     "EOM Strategy": [
-        ("entry_days", "3", "Days before month end to enter"),
-        ("exit_days", "2", "Days after month start to exit"),
+        ("entry_offset", "3", "Execute entry on EOM-3 (signal on EOM-4 under next-observation execution)"),
+        ("exit_offset", "1", "Execute exit on EOM-1 (signal on EOM-2 under next-observation execution)"),
         ("direction", "long", "Trade direction (long/short spread)"),
     ],
 }
@@ -601,17 +602,18 @@ pipeline:
 
 backtest:
   slippage_ticks: 1
-  commission: 2.50
+  commission_per_contract: 2.50
+  tick_size: 0.0005
   tick_value: 12.50
 
 strategies:
   dte:
-    entry_dte: 20
+    entry_dte: 15
     exit_dte: 5
-    direction: short
+    direction: long
   eom:
-    entry_days: 3
-    exit_days: 2
+    entry_offset: 3
+    exit_offset: 1
     direction: long
 \end{{verbatim}}
 
@@ -661,11 +663,12 @@ Round-trip & \$60.00 & 4 legs $\times$ \$15.00 \\
 
 \subsection{{Fill Price Determination}}
 
-To prevent look-ahead bias, fills use next-bucket open prices:
+To prevent look-ahead bias, fills use the next observation's spread mark
+(bucket-close for bucket data; daily proxy close for daily data):
 \begin{{itemize}}
-    \item Signal generated at bucket $t$ close
-    \item Order filled at bucket $t+1$ open
-    \item Slippage added/subtracted from fill price
+    \item Signal generated at observation $t$ close
+    \item Order executed at observation $t+1$ close (no same-observation fills)
+    \item Slippage and commission deducted per fill (2 legs per side, 4 fills per round-trip)
 \end{{itemize}}
 
 \subsection{{Position Sizing}}
@@ -680,7 +683,7 @@ To prevent look-ahead bias, fills use next-bucket open prices:
 
 \begin{{enumerate}}
     \item Entry signals use data available at signal time only
-    \item Fill prices are future prices (next bucket open)
+    \item Execution uses the next observation (no same-observation fills)
     \item DTE calculations use expiry dates known at trade date
     \item Roll detection uses only past volume data
 \end{{enumerate}}
@@ -692,13 +695,18 @@ To prevent look-ahead bias, fills use next-bucket open prices:
 The pipeline produces outputs in the following directory structure:
 
 \begin{{verbatim}}
+metadata/
+  contract_specs.json       - Contract specs (tick size/value, months, etc.)
+  <SYMBOL>_expiry.parquet   - Expiry schedule (business-day calendar)
+
 data_parquet/
-  metadata/<SYMBOL>/  - Contract specs, expiry calendar
-  buckets/<SYMBOL>/   - Hourly bucket aggregates by contract
-  curve/<SYMBOL>/     - Continuous curve panels (F1-F12)
-  spreads/<SYMBOL>/   - Spread time series (S1_raw, S1_pct)
-  roll_events/<SYMBOL>/ - Roll detection results
-  trades/<SYMBOL>/    - Backtest trade logs and summaries
+  buckets/<SYMBOL>/         - Optional contract-level bucket aggregates
+  daily/<SYMBOL>/           - Contract-level daily bars
+  qc/                       - QC summaries
+  curve/<SYMBOL>/           - Curve panels (F1-F12) at bucket and daily frequency
+  spreads/<SYMBOL>/         - Spread panels (S1..S11), near/far IDs, DTE
+  roll_events/<SYMBOL>/     - Roll shares + detected events
+  trades/<SYMBOL>/          - Backtest trade logs, equity, summary
 
 research_outputs/
   tables/             - Summary statistics (parquet)
@@ -809,6 +817,7 @@ def build_analysis_report(
     data_dir: str | Path = "data_parquet",
     research_dir: str | Path = "research_outputs",
     compile_pdf: bool = True,
+    generate_figures: bool = True,
 ) -> Path:
     """Build the Analysis Results Report.
 
@@ -819,22 +828,27 @@ def build_analysis_report(
     paths.report_dir.mkdir(parents=True, exist_ok=True)
     paths.figures_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate figures
-    from .visualization.analysis_plots import AnalysisVisualizer
-    from .visualization.backtest_plots import BacktestVisualizer
+    # Generate figures (optional: skipped for unit tests)
+    if generate_figures:
+        from .visualization.analysis_plots import AnalysisVisualizer
+        from .visualization.backtest_plots import BacktestVisualizer
 
-    AnalysisVisualizer(paths.figures_dir).generate_all(
-        symbol, paths.tables_dir, data_dir=paths.data_dir
-    )
-    BacktestVisualizer(paths.figures_dir).generate_all(
-        symbol, paths.data_dir / "trades" / symbol
-    )
+        AnalysisVisualizer(paths.figures_dir).generate_all(
+            symbol, paths.tables_dir, data_dir=paths.data_dir
+        )
+        BacktestVisualizer(paths.figures_dir).generate_all(
+            symbol, paths.data_dir / "trades" / symbol
+        )
 
     # Load key tables
     diagnostics = _read_parquet_optional(paths.tables_dir / f"{symbol}_diagnostics.parquet")
     seasonal = _read_parquet_optional(paths.tables_dir / f"{symbol}_seasonal_summary.parquet")
     dte_profile = _read_parquet_optional(paths.tables_dir / f"{symbol}_dte_profile.parquet")
     backtest_summary = _read_parquet_optional(paths.data_dir / "trades" / symbol / "summary.parquet")
+    eom_daily = _read_parquet_optional(paths.tables_dir / f"{symbol}_eom_daily.parquet")
+    qc_stats = _read_parquet_optional(paths.data_dir / "qc" / f"{symbol}_qc.parquet")
+    eom_stop_loss = _read_parquet_optional(paths.data_dir / "trades" / symbol / "eom_stop_loss_sensitivity.parquet")
+    dte_stop_loss = _read_parquet_optional(paths.data_dir / "trades" / symbol / "dte_stop_loss_sensitivity.parquet")
 
     # Load sample trades for appendix
     sample_trades = _get_sample_trades(paths.data_dir / "trades" / symbol, n=15)
@@ -849,6 +863,147 @@ def build_analysis_report(
         if summary_path.exists()
         else "N/A"
     )
+
+    # Bucketing table (exchange time, US/Central)
+    bucket_tbl = _bucket_table()
+    bucket_tex = _df_to_latex(bucket_tbl, floatfmt=".0f")
+
+    # Coverage / data facts (prefer actual artifacts over hard-coded claims)
+    if eom_daily is not None and not eom_daily.empty and "trade_date" in eom_daily.columns:
+        td_min = pd.to_datetime(eom_daily["trade_date"]).min().date()
+        td_max = pd.to_datetime(eom_daily["trade_date"]).max().date()
+        n_trade_days = int(pd.to_datetime(eom_daily["trade_date"]).nunique())
+    else:
+        td_min = None
+        td_max = None
+        n_trade_days = None
+
+    contracts_processed = (
+        int(qc_stats.iloc[0]["contracts_processed"])
+        if qc_stats is not None and not qc_stats.empty and "contracts_processed" in qc_stats.columns
+        else None
+    )
+    total_minute_rows = (
+        int(qc_stats.iloc[0]["total_minute_rows"])
+        if qc_stats is not None and not qc_stats.empty and "total_minute_rows" in qc_stats.columns
+        else None
+    )
+
+    analysis_start_str = td_min.isoformat() if td_min is not None else "N/A"
+    analysis_end_str = td_max.isoformat() if td_max is not None else "N/A"
+    trade_days_str = f"{n_trade_days:,}" if n_trade_days is not None else "N/A"
+    contracts_str = f"{contracts_processed:,}" if contracts_processed is not None else "N/A"
+    minute_rows_str = f"{total_minute_rows:,}" if total_minute_rows is not None else "N/A"
+
+    # Backtest performance table with cost decomposition (derived from trade logs).
+    def _cost_breakdown(trades_dir: Path) -> pd.DataFrame:
+        records: list[dict] = []
+        for strat in ["eom", "dte"]:
+            p = trades_dir / f"{strat}_trades.parquet"
+            if not p.exists():
+                continue
+            df = pd.read_parquet(p)
+            if df.empty or "pnl" not in df.columns:
+                continue
+            closed = df[df.get("status", "closed").isin(["closed", "rolled"])].copy()
+            net = float(closed["pnl"].sum())
+            total_slip = float(closed["slippage_cost"].sum()) if "slippage_cost" in closed.columns else 0.0
+            total_comm = float(closed["commission_cost"].sum()) if "commission_cost" in closed.columns else 0.0
+            total_costs = total_slip + total_comm
+            gross = net + total_costs
+            n = int(len(closed))
+            records.append(
+                {
+                    "strategy": strat,
+                    "gross_pnl": gross,
+                    "total_costs": total_costs,
+                    "net_pnl": net,
+                    "total_slippage": total_slip,
+                    "total_commission": total_comm,
+                    "cost_per_trade": (total_costs / n) if n else 0.0,
+                }
+            )
+        return pd.DataFrame(records)
+
+    trades_dir = paths.data_dir / "trades" / symbol
+    costs_df = _cost_breakdown(trades_dir)
+    perf_df = None
+    if backtest_summary is not None and not backtest_summary.empty:
+        perf_df = backtest_summary.copy()
+        if costs_df is not None and not costs_df.empty:
+            perf_df = perf_df.merge(costs_df, on="strategy", how="left")
+
+    if perf_df is not None and not perf_df.empty:
+        perf_display = perf_df.copy()
+        perf_display["strategy"] = perf_display["strategy"].str.upper()
+        cols = [
+            "strategy",
+            "total_trades",
+            "win_rate",
+            "gross_pnl",
+            "total_costs",
+            "total_pnl",
+            "sharpe_ratio",
+            "max_drawdown_pct",
+            "profit_factor",
+        ]
+        cols = [c for c in cols if c in perf_display.columns]
+        perf_display = perf_display[cols]
+        perf_tex = _df_to_latex(perf_display, floatfmt=".2f")
+    else:
+        perf_tex = "\\emph{(No backtest summary found)}"
+
+    def _fmt_signed_money(x: float | int | None) -> str:
+        if x is None:
+            return "N/A"
+        try:
+            val = float(x)
+        except Exception:
+            return "N/A"
+        sign = "+" if val >= 0 else "-"
+        return f"{sign}${abs(val):,.2f}"
+
+    def _fmt_float(x: float | int | None, ndigits: int = 2) -> str:
+        if x is None:
+            return "N/A"
+        try:
+            return f"{float(x):.{ndigits}f}"
+        except Exception:
+            return "N/A"
+
+    if perf_df is not None and not perf_df.empty:
+        eom_metrics = perf_df[perf_df["strategy"] == "eom"].iloc[0].to_dict() if (perf_df["strategy"] == "eom").any() else {}
+        dte_metrics = perf_df[perf_df["strategy"] == "dte"].iloc[0].to_dict() if (perf_df["strategy"] == "dte").any() else {}
+    else:
+        eom_metrics = {}
+        dte_metrics = {}
+
+    eom_net_str = _fmt_signed_money(eom_metrics.get("total_pnl"))
+    eom_sharpe_str = _fmt_float(eom_metrics.get("sharpe_ratio"))
+    dte_net_str = _fmt_signed_money(dte_metrics.get("total_pnl"))
+    dte_sharpe_str = _fmt_float(dte_metrics.get("sharpe_ratio"))
+
+    # Stop-loss sensitivity tables (robustness section)
+    def _stop_loss_tex(df: Optional[pd.DataFrame]) -> str:
+        if df is None or df.empty:
+            return "\\emph{(No stop-loss sensitivity results found)}"
+        out = df.copy()
+        keep = [
+            "stop_loss_usd",
+            "total_trades",
+            "win_rate",
+            "gross_pnl",
+            "total_costs",
+            "total_pnl",
+            "sharpe_ratio",
+            "max_drawdown_pct",
+        ]
+        keep = [c for c in keep if c in out.columns]
+        out = out[keep]
+        return _df_to_latex(out, floatfmt=".2f")
+
+    eom_sl_tex = _stop_loss_tex(eom_stop_loss)
+    dte_sl_tex = _stop_loss_tex(dte_stop_loss)
 
     # Format tables
     if seasonal is not None and not seasonal.empty:
@@ -871,7 +1026,7 @@ def build_analysis_report(
         dte_tex = "\\emph{(No DTE profile found)}"
 
     diag_tex = _df_to_latex(diagnostics, floatfmt=".0f") if diagnostics is not None else "\\emph{(No diagnostics)}"
-    bt_tex = _df_to_latex(backtest_summary, floatfmt=".2f") if backtest_summary is not None else "\\emph{(No backtest summary)}"
+    bt_tex = perf_tex
 
     # Sample trades for appendix
     if sample_trades is not None and not sample_trades.empty:
@@ -925,78 +1080,64 @@ def build_analysis_report(
 \section{{Executive Summary}}
 %==============================================================================
 
-This report presents comprehensive analysis of \textbf{{{symbol}}} futures calendar spread
-dynamics and systematic trading strategy performance.
+This report documents a reproducible analysis of the \textbf{{{symbol}}} front calendar spread
+($S1 = F2 - F1$) and evaluates two simple systematic rules (EOM and DTE) under an explicit execution
+and transaction-cost model.
 
 \subsection{{Key Findings}}
 
 \begin{{itemize}}
-    \item \textbf{{Term Structure:}} {symbol} predominantly trades in contango, with
-          deferred contracts at premium to front-month
-    \item \textbf{{Seasonality:}} End-of-month effects show statistically significant
-          patterns in spread returns
-    \item \textbf{{Roll Dynamics:}} Volume share transition from F1 to F2 follows
-          predictable patterns 10-15 days before expiry
-    \item \textbf{{Strategy Performance:}} EOM and DTE strategies show positive returns
-          net of transaction costs across the sample period
+    \item \textbf{{Data coverage:}} {contracts_str} contracts; {minute_rows_str} 1-minute bars; {analysis_start_str} to {analysis_end_str} ({trade_days_str} trade dates).
+    \item \textbf{{Market structure:}} {symbol} is often in contango, with measurable variation across the contract lifecycle (DTE) and around month-end (EOM).
+    \item \textbf{{Profitability (net of costs):}} EOM is profitable in this sample (net P\&L {eom_net_str}, Sharpe {eom_sharpe_str}); DTE is not (net P\&L {dte_net_str}, Sharpe {dte_sharpe_str}).
+    \item \textbf{{Interpretation:}} Results are conditional on the execution proxy (bucket/daily closes) and the transaction cost model; sensitivity analyses are provided in Sections 9--10.
 \end{{itemize}}
 
-\subsection{{Data Coverage}}
+\subsection{{How to read this report}}
 
-\begin{{itemize}}
-    \item \textbf{{Analysis Period:}} 2008--2024 (16+ years)
-    \item \textbf{{Contract Coverage:}} All standard delivery months
-    \item \textbf{{Data Frequency:}} 1-minute ticks aggregated to hourly buckets
-    \item \textbf{{Observations:}} Approximately 40,000+ bucket-level observations
-\end{{itemize}}
-
-\subsection{{Strategy Performance Headlines}}
-
-See Section 8 for detailed results. Key metrics (net of transaction costs):
-\begin{{itemize}}
-    \item Sharpe ratios and drawdown statistics for DTE and EOM strategies
-    \item Win rates and profit factors across strategies
-    \item Cost sensitivity analysis showing break-even transaction costs
-\end{{itemize}}
+Sections 2--6 define the data transformations, bucketing, and feature construction. Sections 7--8 define the strategies and show baseline backtest results. Sections 9--10 provide robustness checks (transaction costs, stop-loss sensitivity) and risk diagnostics.
 
 %==============================================================================
-\section{{Data Description}}
+\section{{Data and Preprocessing}}
 %==============================================================================
 
-\subsection{{Raw Data Source}}
+\subsection{{Raw data format}}
 
-The analysis uses vendor-supplied tick data for {symbol} futures contracts:
+Input files are headerless 1-minute OHLCV TXT/CSV in the form:
+\begin{{verbatim}}
+(timestamp, open, high, low, close, volume)
+\end{{verbatim}}
+
+Timestamps are typically \emph{{naive}} (no timezone). The pipeline infers the raw timezone by choosing the conversion to exchange time that minimizes activity during the CME maintenance hour (16:00--16:59 CT).
+
+\subsection{{Exchange time and trade date}}
+
+All timestamps are converted to \textbf{{US/Central}} (CME exchange time). A \textbf{{trade date}} is assigned using the CME Globex boundary:
 \begin{{itemize}}
-    \item \textbf{{Source:}} CME Group via data vendor
-    \item \textbf{{Format:}} 1-minute OHLCV bars in CSV format
-    \item \textbf{{Coverage:}} All listed contract months from 2008 to 2024
+  \item If timestamp $\ge$ 17:00 CT, trade date = next calendar date.
+  \item Otherwise, trade date = same calendar date.
 \end{{itemize}}
 
-\subsection{{Data Processing Pipeline}}
+\subsection{{Bucketing (hourly session schema)}}
 
-Raw data undergoes the following transformations:
-\begin{{enumerate}}
-    \item \textbf{{Timestamp Normalization:}} Convert to Central Time (CT)
-    \item \textbf{{Trade Date Assignment:}} Apply 17:00 CT boundary rule
-    \item \textbf{{Hourly Aggregation:}} Bucket 1-minute bars into 10 hourly periods
-    \item \textbf{{Contract Ranking:}} Assign F1-F12 labels by expiry date
-    \item \textbf{{Spread Calculation:}} Compute S1 = F2 - F1
-\end{{enumerate}}
+Minute bars are aggregated into a 10-bucket schema per trade date. Buckets are defined so that the trade-date boundary (17:00 CT) is also the start of bucket 8. Bucket 0 (16:00--16:59 CT) is treated as QC-only.
 
-\subsection{{Final Dataset Structure}}
+\begin{{table}}[H]
+\centering
+{bucket_tex}
+\caption{{Bucket schema in exchange time (US/Central). Note: buckets 8 and 9 occur on the \emph{{prior}} calendar day but belong to the next trade date.}}
+\label{{tab:bucket_schema}}
+\end{{table}}
 
-\begin{{center}}
-\begin{{tabular}}{{|l|l|}}
-\hline
-\textbf{{Dimension}} & \textbf{{Value}} \\
-\hline
-Time granularity & Hourly buckets (10 per trade date) \\
-Contract depth & F1 through F12 \\
-Spread series & S1\_raw (dollars), S1\_pct (percentage) \\
-Date range & 2008-01-01 to 2024-12-31 \\
-\hline
-\end{{tabular}}
-\end{{center}}
+\subsection{{Aggregation outputs}}
+
+The pipeline produces:
+\begin{{itemize}}
+  \item Contract-level bucket OHLCV (Stage 1)
+  \item Deterministic curve panel (F1..F12) and spreads (Stage 2)
+  \item Daily US-session $S1$ proxy with EOM labels (Stage 3)
+  \item Backtests with trade logs and equity curves (Stage 4)
+\end{{itemize}}
 
 %==============================================================================
 \section{{Data Cleaning and Quality}}
@@ -1007,10 +1148,9 @@ Date range & 2008-01-01 to 2024-12-31 \\
 \begin{{itemize}}
     \item \textbf{{OHLC Consistency:}} Verified High $\geq$ max(Open, Close) and
           Low $\leq$ min(Open, Close) for all bars
-    \item \textbf{{Z-Score Outlier Detection:}} Flagged observations with
-          $|z| > 3$ for manual review; 38 outlier events identified
-    \item \textbf{{Expiry Constraint:}} Verified DTE $>$ 0 for all F1 contract labels
-    \item \textbf{{Missing Data:}} Identified and handled gaps in trading sessions
+    \item \textbf{{Outliers:}} Large spread moves are flagged for review (retained unless explicitly excluded for a specific statistic)
+    \item \textbf{{Expiry constraint:}} Verified DTE $>$ 0 for all eligible F1 labels (no expired-contract trading)
+    \item \textbf{{Missing data:}} Spread observations require both legs to have a print in the bucket; missing prints propagate to NA spreads (no forward-fill)
 \end{{itemize}}
 
 \subsection{{Diagnostics Summary}}
@@ -1025,9 +1165,9 @@ Date range & 2008-01-01 to 2024-12-31 \\
 
 Outliers (Z-score $>$ 3) were handled as follows:
 \begin{{itemize}}
-    \item Retained in dataset for analysis transparency
+    \item Retained in the dataset for transparency
     \item Flagged in diagnostics for researcher review
-    \item Excluded from seasonality mean calculations where noted
+    \item Where a statistic is sensitive to extremes, robustness checks are reported explicitly
 \end{{itemize}}
 
 %==============================================================================
@@ -1047,18 +1187,18 @@ where F1 and F2 are the front and second-month contracts respectively.
 
 For cross-commodity and cross-time comparisons, we normalize:
 \[
-S1_{{pct}}(t) = \frac{{F2(t) - F1(t)}}{{F1(t)}} \times 100
+S1_{{pct}}(t) = \frac{{F2(t) - F1(t)}}{{F1(t)}}
 \]
 
-This expresses the spread as a percentage of the front-month price.
+This expresses the spread as a fraction of the front-month price (multiply by 100 for percentage points when desired).
 
 \subsection{{Days-to-Expiry (DTE)}}
 
 DTE is calculated as business days remaining until F1 contract expiration:
 \begin{{itemize}}
-    \item Uses US market holiday calendar
-    \item Excludes weekends and CME-observed holidays
-    \item Provides consistent lifecycle comparison across contract months
+    \item Computed using the CME trading calendar (weekends and exchange holidays excluded)
+    \item Business-day DTE (\texttt{{F1\_dte\_bdays}}) is computed on the trade-date axis
+    \item Hour-based DTE (\texttt{{F1\_dte\_hours}}) is computed from bucket-end timestamps (for diagnostics)
 \end{{itemize}}
 
 \subsection{{Roll Detection}}
@@ -1069,6 +1209,21 @@ s(t) = \frac{{V_{{F2}}(t)}}{{V_{{F1}}(t) + V_{{F2}}(t)}}
 \]
 
 Roll phases: Start ($s \geq 25\%$), Peak ($s \geq 50\%$), End ($s \geq 75\%$).
+
+\subsection{{End-of-Month (EOM) labeling and daily proxy}}
+
+EOM offsets are defined on the business-day calendar:
+\begin{{itemize}}
+    \item \texttt{{EOM-0}}: last business day of the month
+    \item \texttt{{EOM-1}}: second-to-last business day
+    \item \texttt{{EOM-k}}: $k$ business days before month-end
+\end{{itemize}}
+
+For EOM analysis and the EOM backtest, we use a daily US-session proxy for $S1$ (09:00--15:59 CT):
+\begin{{itemize}}
+    \item Compute a volume-weighted average of bucket $S1$ within the US session.
+    \item If the $(S1\_near, S1\_far)$ pair changes intraday (e.g., around expiry), the day is filtered to a single representative pair to avoid mixing different spreads.
+\end{{itemize}}
 
 %==============================================================================
 \section{{Spread Characteristics}}
@@ -1124,8 +1279,7 @@ increased volatility due to roll activity.
     \emph{{(Figure not available)}}
 }}
 \caption{{Timeline of contango (green) and backwardation (red) states across the
-    sample period. Contango predominates but backwardation episodes occur during
-    supply disruptions.}}
+    sample period. Contango predominates but backwardation episodes occur.}}
 \end{{figure}}
 
 %==============================================================================
@@ -1179,10 +1333,10 @@ fewer observations.
     \emph{{(Figure not available)}}
 }}
 \caption{{Distribution of end-of-month spread returns showing positive skew
-    consistent with institutional rebalancing effects.}}
+    and the empirical shape of the EOM window returns (descriptive; no costs).}}
 \end{{figure}}
 
-\textbf{{Economic Rationale:}} End-of-month effects in commodity spreads may reflect:
+\textbf{{Economic hypothesis (informal):}} End-of-month effects in commodity spreads may reflect:
 \begin{{itemize}}
     \item Index rebalancing by commodity funds
     \item Month-end position squaring by dealers
@@ -1230,12 +1384,12 @@ across roll events.
 \subsection{{Strategy Definitions}}
 
 \begin{{center}}
-\begin{{tabular}}{{|l|l|l|l|}}
+\begin{{tabular}}{{|l|p{{4.8cm}}|p{{4.8cm}}|l|}}
 \hline
 \textbf{{Strategy}} & \textbf{{Entry Rule}} & \textbf{{Exit Rule}} & \textbf{{Direction}} \\
 \hline
-DTE & F1 DTE = 20 days & F1 DTE = 5 days & Short spread \\
-EOM & Last 3 days of month & First 2 days of next month & Long spread \\
+DTE & First signal when $5 < \texttt{{F1\_dte\_bdays}} \le 15$ (executed next observation) & First signal when $\texttt{{F1\_dte\_bdays}} \le 5$ (executed next observation) & Long $S1$ \\
+EOM & Executed entry on \texttt{{EOM-3}} (signal generated on \texttt{{EOM-4}}) & Executed exit on \texttt{{EOM-1}} (signal generated on \texttt{{EOM-2}}) & Long $S1$ \\
 \hline
 \end{{tabular}}
 \end{{center}}
@@ -1260,7 +1414,7 @@ Round-trip cost & \$60.00 & 4 fills $\times$ (\$12.50 + \$2.50) \\
 \begin{{table}}[H]
 \centering
 {bt_tex}
-\caption{{Strategy-level performance metrics (net of transaction costs).}}
+\caption{{Strategy-level performance metrics. \texttt{{total\_pnl}} is net of transaction costs; \texttt{{gross\_pnl}} and \texttt{{total\_costs}} are derived from the trade logs.}}
 \end{{table}}
 
 \subsection{{Equity Curves}}
@@ -1311,6 +1465,16 @@ Round-trip cost & \$60.00 & 4 fills $\times$ (\$12.50 + \$2.50) \\
     magnitude asymmetry.}}
 \end{{figure}}
 
+\begin{{figure}}[H]
+\centering
+\IfFileExists{{../figures/{symbol}_dte_pnl_dist.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_pnl_dist.pdf}}
+}}{{
+    \emph{{(Figure not available)}}
+}}
+\caption{{Distribution of trade P\&L for the DTE strategy.}}
+\end{{figure}}
+
 \subsection{{Monthly Returns}}
 
 \begin{{figure}}[H]
@@ -1324,11 +1488,21 @@ Round-trip cost & \$60.00 & 4 fills $\times$ (\$12.50 + \$2.50) \\
     consistency across time.}}
 \end{{figure}}
 
+\begin{{figure}}[H]
+\centering
+\IfFileExists{{../figures/{symbol}_dte_monthly_heatmap.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_monthly_heatmap.pdf}}
+}}{{
+    \emph{{(Figure not available)}}
+}}
+\caption{{Year-by-month P\&L heatmap for the DTE strategy.}}
+\end{{figure}}
+
 %==============================================================================
-\section{{Transaction Cost Sensitivity}}
+\section{{Sensitivity and Robustness}}
 %==============================================================================
 
-\subsection{{Cost Sensitivity Analysis}}
+\subsection{{Transaction Cost Sensitivity}}
 
 \begin{{figure}}[H]
 \centering
@@ -1341,6 +1515,16 @@ Round-trip cost & \$60.00 & 4 fills $\times$ (\$12.50 + \$2.50) \\
     Vertical line indicates baseline assumption.}}
 \end{{figure}}
 
+\begin{{figure}}[H]
+\centering
+\IfFileExists{{../figures/{symbol}_dte_cost_sensitivity.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_cost_sensitivity.pdf}}
+}}{{
+    \emph{{(Figure not available)}}
+}}
+\caption{{DTE strategy cost sensitivity to slippage and commission assumptions (same methodology as EOM).}}
+\end{{figure}}
+
 \subsection{{Break-Even Analysis}}
 
 Transaction costs are a critical determinant of strategy viability. The cost
@@ -1351,9 +1535,44 @@ sensitivity figure shows:
     \item Margin of safety relative to realistic cost estimates
 \end{{itemize}}
 
-\textbf{{Discussion:}} The baseline assumption of 1 tick slippage and \$2.50 commission
-is conservative for liquid contracts like HG. Institutional traders with direct
-market access may achieve lower execution costs, improving strategy profitability.
+\textbf{{Discussion:}} In this run, the EOM strategy remains profitable under a wide range of costs. The DTE strategy remains unprofitable even under very low costs, indicating that (for this definition) the edge is negative before costs.
+
+\subsection{{Stop-Loss Sensitivity (robustness check)}}
+
+Stop losses are \emph{{not}} part of the baseline definition. Here we evaluate a simple stop-loss rule as a robustness check:
+if the \textbf{{gross}} mark-to-market P\&L (excluding costs) falls below \texttt{{-stop\_loss\_usd}} at an observation close, the position is closed.
+
+\begin{{figure}}[H]
+\centering
+\IfFileExists{{../figures/{symbol}_eom_stop_loss_sensitivity.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_eom_stop_loss_sensitivity.pdf}}
+}}{{
+    \emph{{(Figure not available)}}
+}}
+\caption{{EOM stop-loss sensitivity.}}
+\end{{figure}}
+
+\begin{{figure}}[H]
+\centering
+\IfFileExists{{../figures/{symbol}_dte_stop_loss_sensitivity.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_stop_loss_sensitivity.pdf}}
+}}{{
+    \emph{{(Figure not available)}}
+}}
+\caption{{DTE stop-loss sensitivity.}}
+\end{{figure}}
+
+\begin{{table}}[H]
+\centering
+{eom_sl_tex}
+\caption{{EOM stop-loss sensitivity table (net of costs).}}
+\end{{table}}
+
+\begin{{table}}[H]
+\centering
+{dte_sl_tex}
+\caption{{DTE stop-loss sensitivity table (net of costs).}}
+\end{{table}}
 
 %==============================================================================
 \section{{Risk Analysis}}
@@ -1368,8 +1587,17 @@ market access may achieve lower execution costs, improving strategy profitabilit
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{Rolling Sharpe ratio and win rate (252-day window) showing performance
-    stability over time.}}
+\caption{{EOM rolling Sharpe ratio and win rate (20-trade window).}}
+\end{{figure}}
+
+\begin{{figure}}[H]
+\centering
+\IfFileExists{{../figures/{symbol}_dte_rolling_performance.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_rolling_performance.pdf}}
+}}{{
+    \emph{{(Figure not available)}}
+}}
+\caption{{DTE rolling Sharpe ratio and win rate (20-trade window).}}
 \end{{figure}}
 
 \subsection{{Cumulative Monthly P\&L}}
@@ -1381,27 +1609,18 @@ market access may achieve lower execution costs, improving strategy profitabilit
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{Monthly P\&L breakdown with cumulative total showing contribution of
-    each month to total performance.}}
+\caption{{EOM monthly P\&L breakdown with cumulative total.}}
 \end{{figure}}
 
-\subsection{{Drawdown Analysis}}
-
-Key drawdown statistics:
-\begin{{itemize}}
-    \item Maximum drawdown and duration
-    \item Recovery time from largest drawdown
-    \item Frequency of drawdowns exceeding various thresholds
-\end{{itemize}}
-
-\subsection{{Consecutive Loss Analysis}}
-
-Understanding losing streaks is critical for position sizing and risk management:
-\begin{{itemize}}
-    \item Longest consecutive losing trade sequence
-    \item Maximum cumulative loss during losing streak
-    \item Average time between winning trades during drawdowns
-\end{{itemize}}
+\begin{{figure}}[H]
+\centering
+\IfFileExists{{../figures/{symbol}_dte_cumulative_monthly.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_cumulative_monthly.pdf}}
+}}{{
+    \emph{{(Figure not available)}}
+}}
+\caption{{DTE monthly P\&L breakdown with cumulative total.}}
+\end{{figure}}
 
 %==============================================================================
 \section{{Threats to Validity}}
@@ -1409,11 +1628,9 @@ Understanding losing streaks is critical for position sizing and risk management
 
 \subsection{{Look-Ahead Bias}}
 
-\textbf{{Mitigation:}} All signals use only data available at signal time. Fills
-occur at next-bucket open prices, not at signal-time prices.
+\textbf{{Mitigation:}} All signals use only data available at signal time. The backtester enforces a one-observation delay between signal and execution (no same-observation fills).
 
-\textbf{{Residual Risk:}} Contract expiry dates are known in advance, but the
-exact roll timing depends on market activity that unfolds in real-time.
+\textbf{{Residual risk:}} Execution prices are observation closes (bucket close / daily proxy) rather than bid/ask executable prices. This can overstate realizability in fast markets.
 
 \subsection{{Transaction Cost Assumptions}}
 
@@ -1421,7 +1638,7 @@ exact roll timing depends on market activity that unfolds in real-time.
 during volatile periods.
 
 \textbf{{Mitigation:}} Sensitivity analysis tests a wide range of cost assumptions.
-Results show profitability persists under reasonable cost variation.
+For HG, the EOM strategy remains profitable under a wide range of costs; the DTE strategy does not.
 
 \subsection{{Limited Strategy Variants}}
 
@@ -1458,8 +1675,7 @@ not delisted due to performance).
           statistical treatment given sample size limitations
     \item \textbf{{Roll Behavior:}} Volume share transition provides a reliable
           signal for roll timing
-    \item \textbf{{Strategy Viability:}} Both DTE and EOM strategies show positive
-          expected returns net of transaction costs
+    \item \textbf{{Strategy Viability (HG):}} EOM is profitable net of transaction costs in this sample; DTE is not (under this rule definition)
 \end{{enumerate}}
 
 \subsection{{Strategy Viability Assessment}}
@@ -1468,8 +1684,7 @@ Based on the backtest results:
 \begin{{itemize}}
     \item \textbf{{EOM Strategy:}} Economically motivated by index rebalancing;
           positive Sharpe ratio with acceptable drawdowns
-    \item \textbf{{DTE Strategy:}} Captures lifecycle effects; performance varies
-          by market regime
+    \item \textbf{{DTE Strategy:}} Not profitable in this sample under the baseline rule; further work is needed to refine the hypothesis or the implementation
     \item \textbf{{Combined:}} Low correlation between strategies suggests
           diversification benefit
 \end{{itemize}}
@@ -1495,27 +1710,29 @@ this report.
 \subsection{{Pipeline Configuration}}
 
 \begin{{verbatim}}
-data_source: /home/austinli/futures_data/organized_data
-output_dir: data_parquet
-research_dir: research_outputs
+data_dir: {paths.data_dir.resolve()}
+research_dir: {paths.research_dir.resolve()}
 \end{{verbatim}}
 
 \subsection{{Backtest Configuration}}
 
 \begin{{verbatim}}
-slippage_ticks: 1
-commission: 2.50
-tick_value: 12.50  # HG
+Execution:
+  slippage_ticks: 1
+  commission_per_contract: 2.50
+  tick_size: 0.0005
+  tick_value: 12.50
+  initial_capital: 100000
 
-dte_strategy:
-  entry_dte: 20
-  exit_dte: 5
-  direction: short
+DTE strategy:
+  entry: 5 < F1_dte_bdays <= 15
+  exit:  F1_dte_bdays <= 5
+  direction: long S1
 
-eom_strategy:
-  entry_days: 3
-  exit_days: 2
-  direction: long
+EOM strategy:
+  executed entry: EOM-3
+  executed exit:  EOM-1
+  direction: long S1
 \end{{verbatim}}
 
 %==============================================================================
@@ -1547,7 +1764,7 @@ First 15 trades from the backtest trade log:
     \item \textbf{{Contract Labels:}} F1--F12 ranked strictly by expiry (not by volume).
     \item \textbf{{Spread:}} $S1 = F2 - F1$ in price units; normalized as $(F2-F1)/F1$.
     \item \textbf{{Transaction Costs:}} Modeled per-leg per-side (4 fills per round trip).
-    \item \textbf{{Sharpe:}} Annualized using observed trade frequency, not fixed $\sqrt{{252}}$.
+    \item \textbf{{Sharpe:}} Annualized using equity-curve timestamp spacing (data-driven annualization factor).
 \end{{itemize}}
 
 \end{{document}}
@@ -1597,7 +1814,19 @@ def build_pipeline_report(
 def _compile_latex(tex_path: Path, cwd: Optional[Path] = None) -> None:
     """Compile a TeX file with pdflatex (twice for TOC)."""
     cwd = cwd or tex_path.parent
+    cwd = Path(cwd)
     cmd = ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", tex_path.name]
     # Run twice to resolve TOC and references
     subprocess.run(cmd, cwd=str(cwd), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     subprocess.run(cmd, cwd=str(cwd), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+    # Hygiene: remove intermediate build artifacts, keep only .tex and .pdf.
+    stem = tex_path.stem
+    keep = {f"{stem}.tex", f"{stem}.pdf"}
+    for p in cwd.glob(f"{stem}.*"):
+        if p.name in keep:
+            continue
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass

@@ -4,7 +4,7 @@ Implements causal signal handling, transaction costs, and trade mechanics.
 
 Key requirements:
 - Signals use only data available at signal time (no look-ahead)
-- Entry at next-bucket open after signal (never same bucket)
+- Entry/exit are executed on the next observation (no same-observation fills by default)
 - Explicit transaction costs (slippage + commissions)
 - Roll mechanics for spread positions
 """

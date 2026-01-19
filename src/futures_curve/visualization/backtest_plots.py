@@ -462,22 +462,28 @@ class BacktestVisualizer:
             plt.close(fig)
             raise ValueError("No valid trade data")
 
-        # Estimate gross P&L (before costs) based on trade count
+        # Estimate gross P&L (before costs) based on trade count and recorded costs.
         n_trades = len(df_clean)
-        total_pnl = df_clean["pnl"].sum()
+        total_pnl = float(df_clean["pnl"].sum())
 
-        # Assume 4 fills per trade (2 legs x 2 sides), tick_value = 12.50
+        # Assume 4 fills per trade (2 legs x 2 sides), tick_value = 12.50 for HG.
         tick_value = 12.50
         fills_per_trade = 4
 
-        # Current cost per trade: slippage + commission
-        current_slippage_cost = base_slippage * tick_value * fills_per_trade
-        current_commission_cost = base_commission * fills_per_trade
-        current_cost_per_trade = current_slippage_cost + current_commission_cost
-        total_current_cost = current_cost_per_trade * n_trades
+        # Prefer recorded execution costs if available; otherwise fall back to the base assumptions.
+        has_cost_cols = {"slippage_cost", "commission_cost"}.issubset(df_clean.columns)
+        if has_cost_cols:
+            total_current_cost = float(df_clean["slippage_cost"].sum()) + float(df_clean["commission_cost"].sum())
+            # Back out per-trade implied costs (used only for the baseline gross P&L estimate).
+            current_cost_per_trade = total_current_cost / n_trades if n_trades > 0 else 0.0
+        else:
+            current_slippage_cost = base_slippage * tick_value * fills_per_trade
+            current_commission_cost = base_commission * fills_per_trade
+            current_cost_per_trade = current_slippage_cost + current_commission_cost
+            total_current_cost = current_cost_per_trade * n_trades
 
-        # Estimate gross P&L
-        gross_pnl = total_pnl + total_current_cost
+        # Gross P&L estimate: net + baseline costs
+        gross_pnl = total_pnl + float(total_current_cost)
 
         # 1. Slippage sensitivity (holding commission constant)
         slippage_values = np.arange(0, 5.1, 0.5)
@@ -538,6 +544,109 @@ class BacktestVisualizer:
 
         if output_path is None:
             output_path = self.output_dir / f"{symbol}_{strategy}_cost_sensitivity.pdf"
+
+        fig.savefig(output_path, **FIGURE_DEFAULTS)
+        plt.close(fig)
+        return output_path
+
+    def plot_stop_loss_sensitivity(
+        self,
+        df: pd.DataFrame,
+        symbol: str,
+        strategy: str = "eom",
+        output_path: Optional[Path] = None,
+    ) -> Path:
+        """Plot how performance changes with different stop-loss thresholds."""
+        if df is None or df.empty:
+            raise ValueError("No stop-loss sensitivity data to plot")
+
+        df_plot = df.copy()
+        # Normalize stop-loss labels for plotting.
+        if "stop_loss_usd" in df_plot.columns:
+            df_plot["stop_loss_usd"] = pd.to_numeric(df_plot["stop_loss_usd"], errors="coerce")
+        else:
+            df_plot["stop_loss_usd"] = np.nan
+        df_plot["stop_loss_label"] = df_plot["stop_loss_usd"].apply(
+            lambda x: "None" if pd.isna(x) else f"${float(x):.0f}"
+        )
+
+        df_plot = df_plot.sort_values(["stop_loss_usd"], na_position="first").reset_index(drop=True)
+
+        fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+        x = np.arange(len(df_plot))
+        labels = df_plot["stop_loss_label"].tolist()
+
+        # 1) Net P&L bars
+        pnl = df_plot["total_pnl"].astype(float)
+        colors = [ACADEMIC_PALETTE["positive"] if p >= 0 else ACADEMIC_PALETTE["negative"] for p in pnl]
+        axes[0].bar(
+            x,
+            pnl,
+            color=colors,
+            edgecolor=ACADEMIC_PALETTE["primary"],
+            linewidth=LAYOUT_SETTINGS["bar_edge_width"],
+            alpha=0.85,
+        )
+        axes[0].axhline(y=0, color=ACADEMIC_PALETTE["neutral"], linestyle="-", linewidth=1.5)
+        axes[0].yaxis.set_major_formatter(plt.FuncFormatter(lambda v, p: f"${v:,.0f}"))
+        apply_style(axes[0], ylabel="Net P&L ($)", title="Net P&L vs Stop Loss")
+
+        # 2) Sharpe + max drawdown lines
+        sharpe = pd.to_numeric(df_plot.get("sharpe_ratio"), errors="coerce")
+        dd = pd.to_numeric(df_plot.get("max_drawdown_pct"), errors="coerce")
+
+        axes[1].plot(
+            x,
+            sharpe,
+            color=ACADEMIC_PALETTE["primary"],
+            linewidth=LAYOUT_SETTINGS["line_width"],
+            marker="o",
+            markersize=LAYOUT_SETTINGS["marker_size"],
+            label="Sharpe",
+        )
+        axes[1].axhline(y=0, color=ACADEMIC_PALETTE["neutral"], linestyle="-", linewidth=1.2, alpha=0.7)
+        apply_style(axes[1], xlabel="Stop Loss (gross USD)", ylabel="Sharpe Ratio")
+
+        ax2 = axes[1].twinx()
+        ax2.plot(
+            x,
+            dd,
+            color=ACADEMIC_PALETTE["negative"],
+            linewidth=LAYOUT_SETTINGS["line_width"],
+            marker="s",
+            markersize=LAYOUT_SETTINGS["marker_size"],
+            label="Max Drawdown (%)",
+        )
+        ax2.set_ylabel("Max Drawdown (%)", fontsize=FONT_SETTINGS["label_size"], color=ACADEMIC_PALETTE["negative"])
+        ax2.tick_params(axis="y", labelcolor=ACADEMIC_PALETTE["negative"])
+
+        # Shared x labels
+        axes[1].set_xticks(x)
+        axes[1].set_xticklabels(labels, fontsize=FONT_SETTINGS["tick_size"])
+
+        # Combined legend
+        lines1, labels1 = axes[1].get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        axes[1].legend(
+            lines1 + lines2,
+            labels1 + labels2,
+            loc="upper left",
+            fontsize=FONT_SETTINGS["legend_size"],
+            framealpha=0.9,
+        )
+
+        fig.suptitle(
+            f"{symbol} {strategy.upper()} Stop-Loss Sensitivity (robustness check)",
+            fontsize=FONT_SETTINGS["title_size"],
+            fontweight="bold",
+            y=1.02,
+        )
+
+        plt.tight_layout()
+
+        if output_path is None:
+            output_path = self.output_dir / f"{symbol}_{strategy}_stop_loss_sensitivity.pdf"
 
         fig.savefig(output_path, **FIGURE_DEFAULTS)
         plt.close(fig)
@@ -676,6 +785,15 @@ class BacktestVisualizer:
             except ValueError:
                 pass
 
+        # EOM stop-loss sensitivity (if available)
+        eom_sl_path = trades_dir / "eom_stop_loss_sensitivity.parquet"
+        if eom_sl_path.exists():
+            try:
+                df = pd.read_parquet(eom_sl_path)
+                outputs["eom_stop_loss_sensitivity"] = self.plot_stop_loss_sensitivity(df, symbol, "eom")
+            except Exception:
+                pass
+
         # DTE trade P&L distribution
         dte_trades_path = trades_dir / "dte_trades.parquet"
         if dte_trades_path.exists():
@@ -685,7 +803,25 @@ class BacktestVisualizer:
                 outputs["dte_monthly_heatmap"] = self.plot_monthly_returns_heatmap(
                     df, symbol, "dte"
                 )
+                outputs["dte_cost_sensitivity"] = self.plot_cost_sensitivity(
+                    df, symbol, "dte"
+                )
+                outputs["dte_cumulative_monthly"] = self.plot_cumulative_pnl_by_month(
+                    df, symbol, "dte"
+                )
+                outputs["dte_rolling_performance"] = self.plot_rolling_performance(
+                    df, symbol, "dte"
+                )
             except ValueError:
+                pass
+
+        # DTE stop-loss sensitivity (if available)
+        dte_sl_path = trades_dir / "dte_stop_loss_sensitivity.parquet"
+        if dte_sl_path.exists():
+            try:
+                df = pd.read_parquet(dte_sl_path)
+                outputs["dte_stop_loss_sensitivity"] = self.plot_stop_loss_sensitivity(df, symbol, "dte")
+            except Exception:
                 pass
 
         return outputs

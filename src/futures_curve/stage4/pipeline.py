@@ -224,6 +224,77 @@ class Stage4Pipeline:
 
         return pd.DataFrame(results)
 
+    def run_stop_loss_sensitivity(
+        self,
+        symbol: str,
+        strategy_name: str = "eom",
+        stop_loss_values: Optional[List[Optional[float]]] = None,
+        verbose: bool = True,
+    ) -> pd.DataFrame:
+        """Run stop-loss sensitivity analysis.
+
+        Notes
+        -----
+        The stop loss is evaluated on **gross** P&L (excluding costs) and is
+        triggered on the close of each observation.
+
+        Args:
+            symbol: Commodity symbol
+            strategy_name: Strategy to test
+            stop_loss_values: List of stop-loss USD thresholds; include None to disable
+            verbose: Print progress
+
+        Returns:
+            DataFrame with results for each stop-loss threshold
+        """
+        if stop_loss_values is None:
+            stop_loss_values = [None, 25, 50, 100, 200, 500, 1000]
+
+        results = []
+
+        for stop_loss in stop_loss_values:
+            if verbose:
+                label = "None" if stop_loss is None else f"${float(stop_loss):.0f}"
+                print(f"  Testing stop_loss_usd = {label}...")
+
+            result = run_backtest(
+                self.data_dir,
+                symbol,
+                strategy_name,
+                execution_config={
+                    "slippage_ticks": self.config.slippage_ticks,
+                    "tick_size": self.config.tick_size,
+                    "tick_value": self.config.tick_value,
+                    "commission_per_contract": self.config.commission_per_contract,
+                    "initial_capital": self.config.initial_capital,
+                },
+                stop_loss_usd=stop_loss,
+                max_holding_bdays=self.max_holding_bdays,
+                allow_same_bucket_execution=self.allow_same_bucket_execution,
+                auto_roll_on_contract_change=self.auto_roll_on_contract_change,
+            )
+
+            report = result.get("report", {})
+            total_pnl = float(report.get("total_pnl", 0) or 0)
+            total_costs = float(report.get("total_costs", 0) or 0)
+
+            results.append(
+                {
+                    "symbol": symbol,
+                    "strategy": strategy_name,
+                    "stop_loss_usd": float(stop_loss) if stop_loss is not None else None,
+                    "total_trades": report.get("total_trades", 0),
+                    "win_rate": report.get("win_rate", 0),
+                    "total_pnl": total_pnl,
+                    "gross_pnl": total_pnl + total_costs,
+                    "total_costs": total_costs,
+                    "sharpe_ratio": report.get("sharpe_ratio", 0),
+                    "max_drawdown_pct": report.get("max_drawdown_pct", 0),
+                }
+            )
+
+        return pd.DataFrame(results)
+
 
 def run_stage4(
     data_dir: str,

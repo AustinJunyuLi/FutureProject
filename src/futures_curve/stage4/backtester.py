@@ -109,11 +109,26 @@ class Backtester:
         current_trade = None
         entry_date = None
         prev_row = None
+        last_priced_date = None
+        last_priced_bucket = None
+        last_priced_price = None
 
         for i, row in data.iterrows():
             td = row["trade_date"].date() if isinstance(row["trade_date"], pd.Timestamp) else row["trade_date"]
             bucket = int(row.get("bucket", 1))
             price = row.get(spread_col)
+            near = row.get(f"{spread_col}_near")
+            far = row.get(f"{spread_col}_far")
+
+            # Track the last available mark for the *current* spread pair.
+            if current_trade is not None and price is not None and pd.notna(price):
+                if (
+                    (pd.isna(near) or near is None or near == current_trade.near_contract)
+                    and (pd.isna(far) or far is None or far == current_trade.far_contract)
+                ):
+                    last_priced_date = td
+                    last_priced_bucket = bucket
+                    last_priced_price = float(price)
 
             # 1) Execute scheduled signals (Mode A: skip if not fillable)
             for sig in schedule.get(i, []):
@@ -122,8 +137,6 @@ class Backtester:
                     continue
 
                 if action == "entry" and current_trade is None:
-                    near = row.get(f"{spread_col}_near")
-                    far = row.get(f"{spread_col}_far")
                     current_trade = self.engine.open_trade(
                         strategy=strategy.name,
                         trade_date=td,
@@ -145,54 +158,75 @@ class Backtester:
                     )
                     current_trade = None
                     entry_date = None
+                    last_priced_date = None
+                    last_priced_bucket = None
+                    last_priced_price = None
 
             # 2) Auto-roll when the traded spread identity changes while holding
             if auto_roll_on_contract_change and current_trade is not None and prev_row is not None:
-                curr_near = row.get(f"{spread_col}_near")
-                curr_far = row.get(f"{spread_col}_far")
+                curr_near = near
+                curr_far = far
                 if (
                     pd.notna(curr_near)
                     and pd.notna(curr_far)
                     and (curr_near != current_trade.near_contract or curr_far != current_trade.far_contract)
                 ):
                     prev_price = prev_row.get(spread_col)
+                    prev_td = prev_row["trade_date"].date() if isinstance(prev_row["trade_date"], pd.Timestamp) else prev_row["trade_date"]
+                    prev_bucket = int(prev_row.get("bucket", 1))
+
+                    # Prefer the previous row's spread mark; otherwise fall back to the last
+                    # available mark while this trade was active. This prevents orphaned
+                    # open trades when the spread becomes temporarily unpriced.
                     if prev_price is not None and pd.notna(prev_price):
-                        prev_td = prev_row["trade_date"].date() if isinstance(prev_row["trade_date"], pd.Timestamp) else prev_row["trade_date"]
-                        prev_bucket = int(prev_row.get("bucket", 1))
-                        self.engine.close_trade(
-                            current_trade,
-                            exit_date=prev_td,
-                            exit_bucket=prev_bucket,
-                            exit_price=float(prev_price),
-                            reason="auto_roll",
-                        )
-                        # Open new leg at current price (skip if not fillable)
-                        if price is not None and pd.notna(price):
-                            current_trade = self.engine.open_trade(
-                                strategy=strategy.name,
-                                trade_date=td,
-                                bucket=bucket,
-                                entry_price=float(price),
-                                direction=int(current_trade.direction),
-                                near_contract=curr_near,
-                                far_contract=curr_far,
-                            )
-                            entry_date = td
-                        else:
-                            current_trade = None
-                            entry_date = None
+                        exit_date = prev_td
+                        exit_bucket = prev_bucket
+                        exit_price = float(prev_price)
+                        exit_reason = "auto_roll"
+                    elif last_priced_price is not None:
+                        exit_date = last_priced_date
+                        exit_bucket = last_priced_bucket
+                        exit_price = float(last_priced_price)
+                        exit_reason = "auto_roll_unpriced"
                     else:
-                        # Cannot mark/close old spread: force exit at current close if possible.
-                        if price is not None and pd.notna(price):
-                            self.engine.close_trade(
-                                current_trade,
-                                exit_date=td,
-                                exit_bucket=bucket,
-                                exit_price=float(price),
-                                reason="auto_roll_unpriced",
-                            )
+                        exit_date = td
+                        exit_bucket = bucket
+                        exit_price = float(current_trade.entry_price)
+                        exit_reason = "auto_roll_unpriced"
+
+                    direction = int(current_trade.direction)
+                    contracts = int(current_trade.contracts)
+
+                    self.engine.close_trade(
+                        current_trade,
+                        exit_date=exit_date,
+                        exit_bucket=exit_bucket,
+                        exit_price=exit_price,
+                        reason=exit_reason,
+                    )
+
+                    # Open new leg at current price (skip if not fillable)
+                    if price is not None and pd.notna(price):
+                        current_trade = self.engine.open_trade(
+                            strategy=strategy.name,
+                            trade_date=td,
+                            bucket=bucket,
+                            entry_price=float(price),
+                            direction=direction,
+                            contracts=contracts,
+                            near_contract=curr_near,
+                            far_contract=curr_far,
+                        )
+                        entry_date = td
+                        last_priced_date = td
+                        last_priced_bucket = bucket
+                        last_priced_price = float(price)
+                    else:
                         current_trade = None
                         entry_date = None
+                        last_priced_date = None
+                        last_priced_bucket = None
+                        last_priced_price = None
 
             # 3) Risk controls (evaluated/filled on close)
             if current_trade is not None and price is not None and pd.notna(price):
@@ -229,18 +263,29 @@ class Backtester:
 
         # Close any open position at end (last valid price)
         if current_trade is not None:
-            last = data.dropna(subset=[spread_col]).iloc[-1] if data[spread_col].notna().any() else data.iloc[-1]
-            last_td = last["trade_date"].date() if isinstance(last["trade_date"], pd.Timestamp) else last["trade_date"]
-            last_bucket = int(last.get("bucket", 1))
-            last_price = last.get(spread_col)
-            if last_price is not None and pd.notna(last_price):
+            # Prefer the last price observed *while the trade was active* to avoid
+            # accidentally selecting a non-causal close.
+            if last_priced_price is not None:
                 self.engine.close_trade(
                     current_trade,
-                    exit_date=last_td,
-                    exit_bucket=last_bucket,
-                    exit_price=float(last_price),
+                    exit_date=last_priced_date,
+                    exit_bucket=last_priced_bucket,
+                    exit_price=float(last_priced_price),
                     reason="eod",
                 )
+            else:
+                last = data.dropna(subset=[spread_col]).iloc[-1] if data[spread_col].notna().any() else data.iloc[-1]
+                last_td = last["trade_date"].date() if isinstance(last["trade_date"], pd.Timestamp) else last["trade_date"]
+                last_bucket = int(last.get("bucket", 1))
+                last_price = last.get(spread_col)
+                if last_price is not None and pd.notna(last_price):
+                    self.engine.close_trade(
+                        current_trade,
+                        exit_date=last_td,
+                        exit_bucket=last_bucket,
+                        exit_price=float(last_price),
+                        reason="eod",
+                    )
             current_trade = None
 
         # Generate results
