@@ -839,6 +839,17 @@ def build_analysis_report(
     # Load sample trades for appendix
     sample_trades = _get_sample_trades(paths.data_dir / "trades" / symbol, n=15)
 
+    # Report provenance (helps prevent “stale PDF” confusion when multiple runs exist)
+    from datetime import datetime, timezone
+
+    generated_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    summary_path = paths.data_dir / "trades" / symbol / "summary.parquet"
+    summary_mtime_utc = (
+        datetime.fromtimestamp(summary_path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        if summary_path.exists()
+        else "N/A"
+    )
+
     # Format tables
     if seasonal is not None and not seasonal.empty:
         seasonal_fmt = seasonal.copy()
@@ -899,6 +910,14 @@ def build_analysis_report(
 
 \begin{{document}}
 \maketitle
+\noindent\textbf{{Run provenance}}\\
+\begin{{itemize}}[noitemsep]
+  \item data\_dir: \verb|{paths.data_dir.resolve()}|
+  \item research\_dir: \verb|{paths.research_dir.resolve()}|
+  \item generated (UTC): {generated_utc}
+  \item trades summary mtime (UTC): {summary_mtime_utc}
+\end{{itemize}}
+\medskip
 \tableofcontents
 \newpage
 

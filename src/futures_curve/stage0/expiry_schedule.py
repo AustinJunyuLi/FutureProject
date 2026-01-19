@@ -56,8 +56,29 @@ class ExpiryCalculator:
         if self.calendar is None:
             return [d.date() for d in pd.bdate_range(start=start_date, end=end_date, freq="B")]
 
+        # For contract expiry calculations, CME product calendars can differ from
+        # the exchange's *trading* calendar on a small set of dates (notably
+        # Good Friday, which is typically a non-trading day but still counted as
+        # a business day for some expiry rules). The Archive codebase uses the
+        # CME contract calendar directly; empirically, the only mismatch in our
+        # HG dataset was Good Friday-in-March edge cases.
         schedule = self.calendar.schedule(start_date=start_date, end_date=end_date)
-        return list(schedule.index.date)
+        open_days = set(schedule.index.date)
+
+        weekdays = pd.bdate_range(start=start_date, end=end_date, freq="B")
+
+        try:
+            from pandas.tseries.holiday import AbstractHolidayCalendar, GoodFriday
+
+            class _GoodFridayCalendar(AbstractHolidayCalendar):
+                rules = [GoodFriday]
+
+            good_fridays = set(_GoodFridayCalendar().holidays(start=str(start_date), end=str(end_date)).date)
+        except Exception:  # pragma: no cover - defensive: holiday API should be available in pandas
+            good_fridays = set()
+
+        business_days = [d.date() for d in weekdays if (d.date() in open_days) or (d.date() in good_fridays)]
+        return business_days
 
     def third_last_business_day(self, year: int, month: int) -> date:
         """Get third-to-last business day of a month.

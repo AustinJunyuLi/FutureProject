@@ -27,11 +27,16 @@ class TestExpiryCalculator:
         """Test copper (HG) expiry calculation."""
         calc = ExpiryCalculator()
 
-        # HG uses third last business day rule
+        # HG uses a third-last business day rule. Empirically, the only edge
+        # cases versus the exchange trading calendar are when Good Friday lands
+        # in March (Good Friday is not a trading day, but is still counted as a
+        # business day for expiry calculations in the source contract calendar).
         expiry = calc.compute_expiry("HG", 2024, 3)
-        assert expiry.month == 3
-        assert expiry.year == 2024
+        assert expiry == date(2024, 3, 27)
         assert expiry.weekday() < 5  # Not weekend
+
+        expiry = calc.compute_expiry("HG", 2018, 3)
+        assert expiry == date(2018, 3, 28)
 
     def test_expiry_not_on_weekend(self):
         """Ensure no expiry falls on weekend."""

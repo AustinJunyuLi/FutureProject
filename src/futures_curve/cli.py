@@ -121,7 +121,11 @@ def run(
         typer.echo("Stage 3: Analysis")
         typer.echo("=" * 60)
 
-        run_stage3(output_dir, symbols)
+        run_stage3(
+            output_dir,
+            symbols,
+            research_dir=cfg.get("paths", {}).get("research_outputs"),
+        )
 
     # Stage 4: Backtesting
     if 4 in stage_list:

@@ -156,7 +156,7 @@ class LifecycleAnalyzer:
             return pd.DataFrame()
 
         merged = merged.copy()
-        merged["trade_date"] = pd.to_datetime(merged["trade_date"]).dt.date
+        merged["trade_date"] = pd.to_datetime(merged["trade_date"], errors="coerce").dt.date
 
         # Anchor: peak if present else start
         if has_peak:
@@ -166,26 +166,48 @@ class LifecycleAnalyzer:
         else:
             merged["roll_anchor_trade_date"] = merged["roll_start_trade_date"]
 
-        # Compute relative business day
-        def _rel_bday(row) -> float:
-            anchor = row["roll_anchor_trade_date"]
-            td = row["trade_date"]
-            if pd.isna(anchor) or pd.isna(td):
-                return float("nan")
-            return self.calendar.business_days_between(anchor, td, include_start=True, include_end=True) - 1
-
-        merged["rel_bday"] = merged.apply(_rel_bday, axis=1)
-
-        # Keep a symmetric window around the roll window, but index relative to the anchor.
-        # Determine event bounds relative to anchor (start/end are kept for context).
-        window_start = merged["roll_start_trade_date"].apply(
-            lambda d: self.calendar.add_business_days(d, -window)
+        # Compute relative business days and the event window *vectorized*.
+        #
+        # The previous implementation used per-row calendar lookups which were
+        # prohibitively slow on multi-year bucket panels (~40k rows).
+        # For business-day offsets, we can compute differences using integer
+        # positions in a precomputed business-day index.
+        min_date = min(
+            d for d in [
+                merged["trade_date"].min(),
+                merged["roll_start_trade_date"].min(),
+                merged["roll_end_trade_date"].min(),
+            ]
+            if pd.notna(d)
         )
-        window_end = merged["roll_end_trade_date"].apply(
-            lambda d: self.calendar.add_business_days(d, window)
+        max_date = max(
+            d for d in [
+                merged["trade_date"].max(),
+                merged["roll_start_trade_date"].max(),
+                merged["roll_end_trade_date"].max(),
+            ]
+            if pd.notna(d)
         )
 
-        mask = (merged["trade_date"] >= window_start) & (merged["trade_date"] <= window_end)
+        bdays = self.calendar.get_business_days(min_date, max_date)
+        bday_dates = pd.to_datetime(bdays, errors="coerce").date
+        pos = {d: i for i, d in enumerate(bday_dates)}
+
+        trade_idx = merged["trade_date"].map(pos)
+        anchor_idx = merged["roll_anchor_trade_date"].map(pos)
+        start_idx = merged["roll_start_trade_date"].map(pos)
+        end_idx = merged["roll_end_trade_date"].map(pos)
+
+        merged["rel_bday"] = (trade_idx - anchor_idx).astype("float64")
+
+        # Keep a symmetric window around the roll window (in business days).
+        mask = (
+            trade_idx.notna()
+            & start_idx.notna()
+            & end_idx.notna()
+            & (trade_idx >= (start_idx - int(window)))
+            & (trade_idx <= (end_idx + int(window)))
+        )
         event_data = merged.loc[mask].copy()
 
         return event_data

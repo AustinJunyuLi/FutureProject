@@ -76,29 +76,24 @@ Timestamps are **naive** strings in `YYYY-MM-DD HH:MM:SS`. The pipeline infers t
 
 ### Pointing the pipeline at your data
 
-Option A — override in config (recommended):
+Option A — create a local config file (recommended):
 
-Create/edit `config/local_paths.yaml` (gitignored):
+Copy the default config to a gitignored local config file:
 
-```yaml
-raw_data_root: "/path/to/organized_data"
-
-# Commodity-specific paths (optional)
-copper: "${raw_data_root}/copper"
-# ... others as needed
+```bash
+cp config/default.yaml config/local_paths.yaml
 ```
 
-Then update `config/default.yaml` to reference the local path, or pass it directly in the CLI:
+Edit `paths.raw_data` in `config/local_paths.yaml` to point at your local `organized_data` root, then run:
+
+```bash
+python -m futures_curve.cli run --config config/local_paths.yaml
+```
+
+Option B — run Stage 1 with an explicit input directory:
 
 ```bash
 python -m futures_curve.cli stage1 --symbol HG --input /path/to/organized_data --output data_parquet
-```
-
-Option B — edit `config/default.yaml`:
-
-```yaml
-paths:
-  raw_data: "/path/to/organized_data"
 ```
 
 ## Usage (end‑to‑end)
@@ -107,6 +102,12 @@ Run the full pipeline (Stages 0–4) for HG using the default config:
 
 ```bash
 python -m futures_curve.cli run --config config/default.yaml
+```
+
+If you created `config/local_paths.yaml`, run with that instead:
+
+```bash
+python -m futures_curve.cli run --config config/local_paths.yaml
 ```
 
 Or run stages explicitly:

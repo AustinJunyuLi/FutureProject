@@ -25,6 +25,9 @@ class Stage3Pipeline:
             data_dir: Base data directory
         """
         self.data_dir = Path(data_dir)
+        # Default mirrors the repository layout: data_parquet/ (data) and research_outputs/ (tables/figures).
+        # The CLI can override this (e.g., for reproducible runs to a separate output root).
+        self.research_dir = self.data_dir.parent / "research_outputs"
 
     def run_eom_analysis(
         self,
@@ -66,7 +69,7 @@ class Stage3Pipeline:
         seasonal_summary = analyzer.seasonal_summary(eom_returns)
 
         # Save outputs
-        output_dir = self.data_dir.parent / "research_outputs" / "tables"
+        output_dir = self.research_dir / "tables"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         eom_returns.to_parquet(output_dir / f"{symbol}_eom_returns.parquet", index=False)
@@ -142,7 +145,7 @@ class Stage3Pipeline:
         avg_event_curve = analyzer.average_event_curve(event_study, spread_col="S1_pct")
 
         # Save outputs
-        output_dir = self.data_dir.parent / "research_outputs" / "tables"
+        output_dir = self.research_dir / "tables"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         dte_profile.to_parquet(output_dir / f"{symbol}_dte_profile.parquet", index=False)
@@ -192,7 +195,7 @@ class Stage3Pipeline:
         )
 
         # Save diagnostic report
-        output_dir = self.data_dir.parent / "research_outputs" / "tables"
+        output_dir = self.research_dir / "tables"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Convert to serializable format
@@ -258,6 +261,7 @@ class Stage3Pipeline:
 def run_stage3(
     data_dir: str,
     symbols: list[str],
+    research_dir: str | Path | None = None,
 ) -> dict:
     """Run Stage 3 pipeline for specified symbols.
 
@@ -269,6 +273,8 @@ def run_stage3(
         Dictionary with analysis results per symbol
     """
     pipeline = Stage3Pipeline(data_dir)
+    if research_dir is not None:
+        pipeline.research_dir = Path(research_dir)
 
     results = {}
     for symbol in symbols:

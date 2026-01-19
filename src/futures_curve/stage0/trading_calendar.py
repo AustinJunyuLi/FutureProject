@@ -96,6 +96,8 @@ class TradingCalendar:
           UTC timestamps; we convert columns to `self.tz_name`.
         - The fallback schedule ignores holidays.
         """
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
         if self.calendar is None:
             return _fallback_schedule(start_date, end_date, self.tz_name)
 

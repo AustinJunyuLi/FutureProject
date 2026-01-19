@@ -1,0 +1,57 @@
+# Reproducible run config (HG) against the local Dropbox data layout.
+# Runs "from first principles" end-to-end, writing to the canonical output
+# directories (data_parquet/, metadata/, research_outputs/).
+
+paths:
+  # Raw data lives in the sibling repo (not tracked in git).
+  raw_data: "../futures_individual_contracts_1min/organized_data"
+  # Use canonical output directories (keeps the workspace tidy).
+  output_parquet: "data_parquet"
+  metadata: "metadata"
+  research_outputs: "research_outputs"
+
+commodities:
+  - HG
+
+ingestion:
+  chunk_size: 100000
+  exchange_timezone: "US/Central"
+  raw_timezone: "auto"
+  trade_date_cutoff: "17:00"
+  file_pattern: "{symbol}_{month_code}{year}_1min.txt"
+
+curve:
+  max_contracts: 12
+  min_dte_threshold: 0
+
+roll:
+  start_threshold: 0.25
+  peak_threshold: 0.50
+  end_threshold: 0.75
+  persistence_bucket: 2
+  persistence_daily: 1
+  smoothing_window_bucket: 3
+  smoothing_window_daily: 1
+  min_total_volume: 1.0
+
+backtest:
+  slippage_ticks: 1
+  commission_per_contract: 2.50
+  tick_size: 0.0005
+  tick_value: 12.50
+  initial_capital: 100000
+  # Archive EOM report is gross of stop-loss logic; disable here for consistency.
+  stop_loss_usd: null
+
+buckets:
+  0: {start: "16:00", end: "16:59", desc: "Maintenance hour (QC only)"}
+  1: {start: "09:00", end: "09:59", desc: "US session hour 1"}
+  2: {start: "10:00", end: "10:59", desc: "US session hour 2"}
+  3: {start: "11:00", end: "11:59", desc: "US session hour 3"}
+  4: {start: "12:00", end: "12:59", desc: "US session hour 4"}
+  5: {start: "13:00", end: "13:59", desc: "US session hour 5"}
+  6: {start: "14:00", end: "14:59", desc: "US session hour 6"}
+  7: {start: "15:00", end: "15:59", desc: "US session hour 7"}
+  8: {start: "17:00", end: "20:59", desc: "Post reopen (Asia/Europe overlap)"}
+  9: {start: "21:00", end: "02:59", desc: "Overnight"}
+  10: {start: "03:00", end: "08:59", desc: "Pre-US session"}
