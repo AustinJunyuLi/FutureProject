@@ -119,11 +119,18 @@ def _read_parquet_optional(path: Path) -> Optional[pd.DataFrame]:
     return pd.read_parquet(path)
 
 
-def _df_to_latex(df: pd.DataFrame, *, floatfmt: str = ".4f", index: bool = False, resize: bool = True) -> str:
+def _df_to_latex(
+    df: pd.DataFrame,
+    *,
+    floatfmt: str = ".4f",
+    index: bool = False,
+    resize: bool = True,
+    column_format: str | None = None,
+) -> str:
     if df is None or df.empty:
         return "\\emph{(No data)}"
     table = df.to_latex(index=index, escape=True,
-                        float_format=lambda x: format(x, floatfmt), bold_rows=False)
+                        float_format=lambda x: format(x, floatfmt), bold_rows=False, column_format=column_format)
     if resize and len(df.columns) > 5:
         # Wrap wide tables in resizebox to fit page width
         return f"\\resizebox{{\\textwidth}}{{!}}{{{table}}}"
@@ -866,7 +873,8 @@ def build_analysis_report(
 
     # Bucketing table (exchange time, US/Central)
     bucket_tbl = _bucket_table()
-    bucket_tex = _df_to_latex(bucket_tbl, floatfmt=".0f")
+    # Prevent overfull hboxes from long descriptions: wrap the last column.
+    bucket_tex = _df_to_latex(bucket_tbl, floatfmt=".0f", column_format="rllp{8cm}")
 
     # Coverage / data facts (prefer actual artifacts over hard-coded claims)
     if eom_daily is not None and not eom_daily.empty and "trade_date" in eom_daily.columns:
@@ -961,7 +969,8 @@ def build_analysis_report(
         except Exception:
             return "N/A"
         sign = "+" if val >= 0 else "-"
-        return f"{sign}${abs(val):,.2f}"
+        # LaTeX: escape dollar sign to avoid accidental math-mode / overfull hboxes.
+        return f"{sign}\\${abs(val):,.2f}"
 
     def _fmt_float(x: float | int | None, ndigits: int = 2) -> str:
         if x is None:
