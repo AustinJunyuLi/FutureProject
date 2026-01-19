@@ -1382,8 +1382,8 @@ across roll events.
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{F2 volume share evolution showing the characteristic S-curve transition
-    pattern during contract rolls.}}
+\caption{{F2 volume share as a function of F1 DTE (business days to expiry),
+    showing the characteristic S-curve transition pattern during contract rolls.}}
 \end{{figure}}
 
 %==============================================================================

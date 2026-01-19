@@ -391,49 +391,145 @@ class AnalysisVisualizer:
         symbol: str,
         output_path: Optional[Path] = None,
     ) -> Path:
-        """Create chart showing F2 volume share evolution around roll events."""
+        """Create chart showing F2 volume share evolution over the front-month lifecycle.
+
+        We aggregate volumes across the US session buckets (1--7) per trade date:
+
+            share_day = sum(F2_volume) / (sum(F1_volume) + sum(F2_volume))
+
+        Then we summarize by F1 business-day DTE so the figure reflects the
+        typical roll progression (an S-curve) rather than a visually dense
+        multi-year time series.
+        """
         fig, ax = plt.subplots(figsize=PLOT_SETTINGS["line"]["figsize"])
 
-        # Look for volume share column
-        vol_share_col = None
-        for col in ["vol_share", "volume_share", "f2_volume_share"]:
-            if col in df.columns:
-                vol_share_col = col
-                break
+        df = df.copy()
 
-        if vol_share_col is None:
-            # Try to compute from F1/F2 volumes
-            if "F1_volume" in df.columns and "F2_volume" in df.columns:
-                df = df.copy()
-                total_vol = df["F1_volume"] + df["F2_volume"]
-                df["vol_share"] = df["F2_volume"] / total_vol.replace(0, np.nan)
-                vol_share_col = "vol_share"
-            else:
-                plt.close(fig)
-                raise ValueError("DataFrame needs volume share data")
-
-        # Group by date and compute mean volume share
+        # Date column
         if "trade_date" in df.columns:
             df["date"] = pd.to_datetime(df["trade_date"])
-        elif "date" not in df.columns:
+        elif "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+        else:
             plt.close(fig)
-            raise ValueError("DataFrame needs date column")
+            raise ValueError("DataFrame needs 'trade_date' or 'date' column")
 
-        daily = df.groupby("date")[vol_share_col].mean().reset_index()
-        daily = daily.sort_values("date")
+        # Preferred path: compute daily share from summed volumes (robust).
+        if "F1_volume" in df.columns and "F2_volume" in df.columns:
+            df["F1_volume"] = pd.to_numeric(df["F1_volume"], errors="coerce")
+            df["F2_volume"] = pd.to_numeric(df["F2_volume"], errors="coerce")
 
-        dates = daily["date"]
-        vol_share = daily[vol_share_col] * 100
+            # Use US session buckets (1-7) when available to match the daily proxy convention.
+            if "bucket" in df.columns:
+                df = df[df["bucket"].between(1, 7)].copy()
 
-        # Main line
-        ax.plot(dates, vol_share, color=ACADEMIC_PALETTE["primary"],
-               linewidth=1.5, alpha=0.7, label="Daily Volume Share")
+            daily = (
+                df.groupby("date", as_index=False)
+                .agg(F1_volume=("F1_volume", "sum"), F2_volume=("F2_volume", "sum"))
+                .sort_values("date")
+            )
+            total = daily["F1_volume"] + daily["F2_volume"]
+            daily["vol_share"] = daily["F2_volume"] / total.replace(0, np.nan)
+            # Attach daily F1 DTE (trade-date based, bucket-invariant).
+            if "F1_dte_bdays" in df.columns:
+                dte_map = (
+                    df.groupby("date", as_index=False)["F1_dte_bdays"]
+                    .first()
+                    .rename(columns={"F1_dte_bdays": "dte"})
+                )
+                daily = daily.merge(dte_map, on="date", how="left")
+        else:
+            # Fallback: use a provided share column; if total volume exists, compute
+            # a volume-weighted average rather than a simple mean.
+            vol_share_col = None
+            for col in ["vol_share", "volume_share", "f2_volume_share"]:
+                if col in df.columns:
+                    vol_share_col = col
+                    break
+            if vol_share_col is None:
+                plt.close(fig)
+                raise ValueError("DataFrame needs F1/F2 volumes or a volume share column")
 
-        # Rolling average
-        if len(vol_share) > 10:
-            rolling_mean = vol_share.rolling(window=10, min_periods=1).mean()
-            ax.plot(dates, rolling_mean, color=ACADEMIC_PALETTE["accent2"],
-                   linewidth=2.5, label="10-day MA")
+            if "total_volume" in df.columns:
+                df["total_volume"] = pd.to_numeric(df["total_volume"], errors="coerce")
+                df["__w"] = df["total_volume"].where(df["total_volume"] > 0)
+                daily = (
+                    df.groupby("date", as_index=False)
+                    .apply(lambda g: pd.Series({
+                        "vol_share": (g[vol_share_col] * g["__w"]).sum() / g["__w"].sum()
+                        if g["__w"].notna().any() else np.nan
+                    }))
+                    .reset_index(drop=True)
+                )
+            else:
+                daily = df.groupby("date", as_index=False)[vol_share_col].mean().rename(columns={vol_share_col: "vol_share"})
+
+            daily = daily.sort_values("date")
+            # Attach daily F1 DTE if available.
+            if "F1_dte_bdays" in df.columns:
+                dte_map = (
+                    df.groupby("date", as_index=False)["F1_dte_bdays"]
+                    .first()
+                    .rename(columns={"F1_dte_bdays": "dte"})
+                )
+                daily = daily.merge(dte_map, on="date", how="left")
+
+        # Build the lifecycle profile: share vs DTE.
+        if "dte" not in daily.columns:
+            plt.close(fig)
+            raise ValueError("DataFrame needs F1_dte_bdays to plot lifecycle volume-share profile")
+
+        prof = daily.copy()
+        prof["dte"] = pd.to_numeric(prof["dte"], errors="coerce")
+        prof = prof.dropna(subset=["dte", "vol_share"]).copy()
+        if prof.empty:
+            plt.close(fig)
+            raise ValueError("No valid volume share / DTE data to plot")
+
+        prof["dte"] = prof["dte"].round().astype(int)
+        stats = (
+            prof.groupby("dte")["vol_share"]
+            .agg(
+                count="count",
+                mean="mean",
+                p25=lambda s: s.quantile(0.25),
+                p75=lambda s: s.quantile(0.75),
+            )
+            .reset_index()
+            .sort_values("dte")
+        )
+
+        # Keep only DTE values with sufficient sample support to avoid single-observation noise.
+        stats = stats[stats["count"] >= 30].copy()
+        if stats.empty:
+            plt.close(fig)
+            raise ValueError("Insufficient sample size to build DTE profile (need >=30 observations per DTE)")
+
+        dte = stats["dte"].to_numpy()
+        mean_pct = stats["mean"].to_numpy() * 100
+        p25_pct = stats["p25"].to_numpy() * 100
+        p75_pct = stats["p75"].to_numpy() * 100
+
+        ax.plot(
+            dte,
+            mean_pct,
+            color=ACADEMIC_PALETTE["primary"],
+            linewidth=2.5,
+            marker="o",
+            markersize=4,
+            label="Mean (US-session, daily)",
+        )
+        ax.fill_between(
+            dte,
+            p25_pct,
+            p75_pct,
+            color=ACADEMIC_PALETTE["ci_band"],
+            alpha=0.25,
+            label="IQR (25–75%)",
+        )
+
+        # Reverse x-axis so the roll progression reads left->right (higher DTE -> lower DTE).
+        ax.invert_xaxis()
 
         # Reference lines for roll thresholds
         ax.axhline(y=25, color=ACADEMIC_PALETTE["neutral"], linestyle="--",
@@ -447,14 +543,13 @@ class AnalysisVisualizer:
 
         apply_style(
             ax,
-            title=f"{symbol} F2 Volume Share Evolution",
-            xlabel="Date",
+            title=f"{symbol} F2 Volume Share vs F1 DTE (roll progression)",
+            xlabel="F1 DTE (business days to expiry)",
             ylabel="F2 Volume Share (%)",
         )
-        ax.legend(loc="upper left", fontsize=FONT_SETTINGS["legend_size"],
+        ax.legend(loc="lower left", fontsize=FONT_SETTINGS["legend_size"],
                  framealpha=0.9, ncol=2)
 
-        fig.autofmt_xdate()
         plt.tight_layout()
 
         if output_path is None:
