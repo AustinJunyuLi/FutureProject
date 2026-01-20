@@ -1,10 +1,9 @@
 """Trading strategies for spread backtesting.
 
 Implements various entry/exit rules:
-- DTE Rule: Entry at L business days before roll peak
 - Liquidity Trigger: Enter when volume share crosses threshold
 - Hybrid: DTE window + liquidity trigger
-- EOM Baseline: Long S1 entry EOM-3, exit EOM-1
+- Pre-expiry window: Enter/exit at business-day DTE thresholds
 """
 
 from abc import ABC, abstractmethod
@@ -61,26 +60,15 @@ class Strategy(ABC):
 
 
 class DTEStrategy(Strategy):
-    """Entry based on days-to-expiry before roll peak.
-
-    Long spread at DTE_entry days before expected roll peak.
-    Exit at DTE_exit or roll completion.
-    """
+    """Backward-compatible alias for :class:`PreExpiryStrategy`."""
 
     def __init__(
         self,
         dte_entry: int = 15,
         dte_exit: int = 5,
     ):
-        """Initialize DTE strategy.
-
-        Args:
-            dte_entry: Entry at this many DTE
-            dte_exit: Exit at this many DTE
-        """
         super().__init__("DTE_Rule")
-        self.dte_entry = dte_entry
-        self.dte_exit = dte_exit
+        self.strategy = PreExpiryStrategy(entry_dte=dte_entry, exit_dte=dte_exit)
 
     def generate_signals(
         self,
@@ -88,16 +76,42 @@ class DTEStrategy(Strategy):
         dte_col: str = "F1_dte_bdays",
         **kwargs,
     ) -> List[Signal]:
-        """Generate signals based on DTE.
+        return self.strategy.generate_signals(data, dte_col=dte_col, **kwargs)
 
-        Args:
-            data: DataFrame with DTE column
-            dte_col: Name of DTE column
 
-        Returns:
-            List of entry/exit signals
-        """
-        signals = []
+class PreExpiryStrategy(Strategy):
+    """Expiry-anchored spread strategy (pre-expiry window).
+
+    Enter a long S1 spread when F1 has <= `entry_dte` business days remaining
+    until expiry, and exit when F1 has <= `exit_dte` business days remaining.
+
+    Notes
+    -----
+    - This strategy is anchored to contract expiry (via `F1_dte_bdays`), not
+      calendar month-end.
+    - `F1_dte_bdays` is defined on the trade-date axis (business days).
+    """
+
+    def __init__(self, entry_dte: int = 5, exit_dte: int = 1, execution: str = "next"):
+        super().__init__("pre_expiry")
+        self.entry_dte = int(entry_dte)
+        self.exit_dte = int(exit_dte)
+        self.execution = str(execution).lower()
+        if self.entry_dte <= self.exit_dte:
+            raise ValueError("entry_dte must be > exit_dte")
+        if self.exit_dte < 0:
+            raise ValueError("exit_dte must be >= 0")
+        if self.execution not in {"next", "same"}:
+            raise ValueError("execution must be 'next' or 'same'")
+
+    def generate_signals(
+        self,
+        data: pd.DataFrame,
+        dte_col: str = "F1_dte_bdays",
+        **kwargs,
+    ) -> List[Signal]:
+        signals: List[Signal] = []
+
         # Chronological ordering (prefer ts_end_utc for bucket panels)
         if "ts_end_utc" in data.columns:
             data = data.sort_values("ts_end_utc").reset_index(drop=True)
@@ -105,37 +119,48 @@ class DTEStrategy(Strategy):
             data = data.sort_values(["trade_date", "bucket"]).reset_index(drop=True)
 
         in_position = False
-        entry_signal = None
 
-        for idx, row in data.iterrows():
+        for _, row in data.iterrows():
             dte = row.get(dte_col)
             if pd.isna(dte):
                 continue
 
             trade_date = row["trade_date"]
-            bucket = row["bucket"]
+            bucket = int(row.get("bucket", 1))
 
             if not in_position:
-                # Check for entry
-                if dte <= self.dte_entry and dte > self.dte_exit:
-                    signals.append(Signal(
-                        date=trade_date,
-                        bucket=bucket,
-                        direction=1,  # Long spread
-                        reason=f"DTE={dte} <= {self.dte_entry}",
-                        metadata={"dte": dte, "action": "entry"},
-                    ))
+                # Enter when within the pre-expiry window (closer to expiry than entry_dte,
+                # but not yet at/through the exit threshold).
+                if dte <= self.entry_dte and dte > self.exit_dte:
+                    signals.append(
+                        Signal(
+                            date=trade_date,
+                            bucket=bucket,
+                            direction=1,
+                            reason=f"pre_expiry_entry_dte={self.entry_dte}",
+                            metadata={
+                                "dte": float(dte),
+                                "action": "entry",
+                                **({"execution": self.execution} if self.execution != "next" else {}),
+                            },
+                        )
+                    )
                     in_position = True
             else:
-                # Check for exit
-                if dte <= self.dte_exit:
-                    signals.append(Signal(
-                        date=trade_date,
-                        bucket=bucket,
-                        direction=0,  # Exit
-                        reason=f"DTE={dte} <= {self.dte_exit}",
-                        metadata={"dte": dte, "action": "exit"},
-                    ))
+                if dte <= self.exit_dte:
+                    signals.append(
+                        Signal(
+                            date=trade_date,
+                            bucket=bucket,
+                            direction=0,
+                            reason=f"pre_expiry_exit_dte={self.exit_dte}",
+                            metadata={
+                                "dte": float(dte),
+                                "action": "exit",
+                                **({"execution": self.execution} if self.execution != "next" else {}),
+                            },
+                        )
+                    )
                     in_position = False
 
         return signals
@@ -313,117 +338,6 @@ class HybridStrategy(Strategy):
         return signals
 
 
-class EOMStrategy(Strategy):
-    """End-of-month spread strategy.
-
-    Design intent
-    -------------
-    The research narrative specifies "Enter EOM-3, exit EOM-1" *with next-bucket
-    execution* (no same-bucket fills).
-
-    Given next-bucket execution, achieving an executed entry on EOM-N requires
-    generating the **signal** on EOM-(N+delay).
-
-    Example (default delay=1 business day):
-        - desired entry execution on EOM-3  -> signal on EOM-4
-        - desired exit execution on  EOM-1  -> signal on EOM-2
-
-    This keeps the executed window aligned to the documented offsets while
-    remaining causal.
-    """
-
-    def __init__(
-        self,
-        entry_offset: int = 3,
-        exit_offset: int = 1,
-        execution_delay_bdays: int = 1,
-    ):
-        """Initialize EOM strategy.
-
-        Args:
-            entry_offset: Desired executed entry at EOM-N (business days before month end)
-            exit_offset: Desired executed exit at EOM-N
-            execution_delay_bdays: Execution delay in business days (default 1 = next observation)
-        """
-        super().__init__("EOM_Baseline")
-        self.entry_offset = int(entry_offset)
-        self.exit_offset = int(exit_offset)
-        self.execution_delay_bdays = int(execution_delay_bdays)
-        if self.execution_delay_bdays < 1:
-            raise ValueError("execution_delay_bdays must be >= 1 to avoid same-bucket execution")
-
-    def generate_signals(
-        self,
-        data: pd.DataFrame,
-        eom_offset_col: str = "eom_offset",
-        **kwargs,
-    ) -> List[Signal]:
-        """Generate signals based on EOM offset.
-
-        Args:
-            data: DataFrame with EOM offset column
-            eom_offset_col: EOM offset column name
-
-        Returns:
-            List of signals
-        """
-        signals: List[Signal] = []
-        data = data.sort_values(["trade_date"]).reset_index(drop=True)
-
-        in_position = False
-
-        # Convert desired *executed* offsets into *signal* offsets under next-bucket execution.
-        entry_signal_offset = self.entry_offset + self.execution_delay_bdays
-        exit_signal_offset = self.exit_offset + self.execution_delay_bdays
-
-        for idx, row in data.iterrows():
-            offset = row.get(eom_offset_col)
-            if pd.isna(offset):
-                continue
-
-            trade_date = row["trade_date"]
-            bucket = row.get("bucket", 1)
-
-            if not in_position:
-                # Signal on EOM-(entry_offset + delay) so execution occurs at EOM-entry_offset.
-                if int(offset) == int(entry_signal_offset):
-                    signals.append(
-                        Signal(
-                            date=trade_date,
-                            bucket=bucket,
-                            direction=1,
-                            reason=f"EOM-signal-for-{self.entry_offset}",
-                            metadata={
-                                "eom_offset": int(offset),
-                                "target_eom_offset": int(self.entry_offset),
-                                "action": "entry",
-                                "execution": "next",
-                            },
-                        )
-                    )
-                    in_position = True
-            else:
-                # Signal on EOM-(exit_offset + delay) so execution occurs at EOM-exit_offset.
-                if int(offset) == int(exit_signal_offset):
-                    signals.append(
-                        Signal(
-                            date=trade_date,
-                            bucket=bucket,
-                            direction=0,
-                            reason=f"EOM-signal-for-{self.exit_offset}",
-                            metadata={
-                                "eom_offset": int(offset),
-                                "target_eom_offset": int(self.exit_offset),
-                                "action": "exit",
-                                "execution": "next",
-                            },
-                        )
-                    )
-                    in_position = False
-
-        return signals
-
-
 def get_strategy(name: str, **kwargs) -> Strategy:
     """Factory function to get strategy by name.
 
@@ -435,10 +349,11 @@ def get_strategy(name: str, **kwargs) -> Strategy:
         Strategy instance
     """
     strategies = {
-        "dte": DTEStrategy,
         "liquidity": LiquidityTriggerStrategy,
         "hybrid": HybridStrategy,
-        "eom": EOMStrategy,
+        "pre_expiry": PreExpiryStrategy,
+        # Backward-compatible alias
+        "dte": DTEStrategy,
     }
 
     name_lower = name.lower()

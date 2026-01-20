@@ -1,9 +1,4 @@
-"""Stage 3: Analysis layer - seasonality, lifecycle, diagnostics."""
-
-from .eom_seasonality import (
-    EOMSeasonality,
-    build_eom_daily_dataset,
-)
+"""Stage 3: Analysis layer - lifecycle, roll studies, diagnostics."""
 from .lifecycle_analysis import (
     LifecycleAnalyzer,
     build_lifecycle_dataset,
@@ -19,8 +14,6 @@ from .pipeline import (
 )
 
 __all__ = [
-    "EOMSeasonality",
-    "build_eom_daily_dataset",
     "LifecycleAnalyzer",
     "build_lifecycle_dataset",
     "DataDiagnostics",

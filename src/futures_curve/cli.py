@@ -231,17 +231,39 @@ def stage3(
     results = run_stage3(data_dir, [symbol])
 
     stats = results.get(symbol, {})
-    eom = stats.get("eom", {})
-    if eom.get("total_trades"):
-        typer.echo(f"\nEOM trades: {eom.get('total_trades')}")
-        typer.echo(f"Win rate: {eom.get('win_rate', 0):.1f}%")
+    lifecycle = stats.get("lifecycle", {}) or {}
+    diagnostics = stats.get("diagnostics", {}) or {}
+
+    if lifecycle:
+        typer.echo(f"\nLifecycle:")
+        if "dte_bins" in lifecycle:
+            typer.echo(f"  DTE bins: {lifecycle.get('dte_bins')}")
+        if "roll_events_studied" in lifecycle:
+            typer.echo(f"  Roll events studied: {lifecycle.get('roll_events_studied')}")
+
+    if diagnostics:
+        typer.echo(f"\nDiagnostics:")
+        for k in ["ohlc_issues_count", "expiry_violations_count", "spread_discrepancies_count", "data_gaps_count"]:
+            if k in diagnostics:
+                typer.echo(f"  {k}: {diagnostics.get(k)}")
 
 
 @app.command()
 def stage4(
     symbol: str = typer.Option("HG", "--symbol", "-s", help="Commodity symbol"),
     data_dir: str = typer.Option("data_parquet", "--data", "-d", help="Data directory"),
-    strategies: str = typer.Option("dte,eom", help="Comma-separated strategies"),
+    strategies: str = typer.Option("pre_expiry", help="Comma-separated strategies"),
+    frequency: str = typer.Option(
+        "bucket",
+        "--frequency",
+        "-f",
+        help="Data frequency: 'bucket' or 'daily_us_vwap' (daily US-session VWAP proxy).",
+    ),
+    daily_pair_policy: str = typer.Option(
+        "mode",
+        "--daily-pair-policy",
+        help="Daily aggregation contract-pair policy: 'mode', 'strict', or 'all'.",
+    ),
 ):
     """Run Stage 4: Backtesting."""
     from .stage4 import run_stage4
@@ -253,12 +275,79 @@ def stage4(
 
     # Use defaults from config/default.yaml if present
     cfg = load_config("config/default.yaml") if Path("config/default.yaml").exists() else {}
+    daily_agg_config = {"pair_policy": daily_pair_policy} if str(frequency).lower() in {"daily_us_vwap", "us_session_daily_vwap"} else None
     results = run_stage4(
         data_dir,
         [symbol],
         strategies=strategy_list,
         execution_config=cfg.get("backtest", {}),
+        data_frequency=frequency,
+        daily_agg_config=daily_agg_config,
     )
+
+
+@app.command()
+def pre_expiry_sweep(
+    symbol: str = typer.Option("HG", "--symbol", "-s", help="Commodity symbol"),
+    data_dir: str = typer.Option("data_parquet", "--data", "-d", help="Data directory"),
+    entry_dte_min: int = typer.Option(2, help="Minimum entry DTE (bdays to expiry)"),
+    entry_dte_max: int = typer.Option(10, help="Maximum entry DTE (bdays to expiry)"),
+    exit_dte_min: int = typer.Option(0, help="Minimum exit DTE (bdays to expiry)"),
+    exit_dte_max: int = typer.Option(3, help="Maximum exit DTE (bdays to expiry)"),
+    min_trades: int = typer.Option(1, help="Minimum trades required to keep a parameter row"),
+    frequency: str = typer.Option(
+        "bucket",
+        "--frequency",
+        "-f",
+        help="Data frequency: 'bucket' or 'daily_us_vwap' (daily US-session VWAP proxy).",
+    ),
+    daily_pair_policy: str = typer.Option(
+        "mode",
+        "--daily-pair-policy",
+        help="Daily aggregation contract-pair policy: 'mode', 'strict', or 'all'.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", help="Print progress for each parameter combo"),
+):
+    """Search for the best-performing pre-expiry (DTE) entry/exit window.
+
+    This sweeps entry/exit DTE thresholds and ranks combinations by net P&L.
+    Results are written to `data_parquet/trades/{symbol}/pre_expiry_sweep_<frequency>.parquet`.
+    """
+    from dataclasses import fields
+
+    from .stage4.execution import ExecutionConfig
+    from .stage4.pipeline import Stage4Pipeline
+
+    cfg = load_config("config/default.yaml") if Path("config/default.yaml").exists() else {}
+    backtest_cfg = (cfg.get("backtest") or {}) if isinstance(cfg, dict) else {}
+
+    allowed = {f.name for f in fields(ExecutionConfig)}
+    exec_cfg = {k: v for k, v in backtest_cfg.items() if k in allowed}
+    risk_keys = {"stop_loss_usd", "max_holding_bdays", "auto_roll_on_contract_change", "allow_same_bucket_execution"}
+    risk_cfg = {k: v for k, v in backtest_cfg.items() if k in risk_keys}
+
+    pipeline = Stage4Pipeline(data_dir, config=ExecutionConfig(**exec_cfg), risk_config=risk_cfg)
+    daily_agg_config = {"pair_policy": daily_pair_policy} if str(frequency).lower() in {"daily_us_vwap", "us_session_daily_vwap"} else None
+    df = pipeline.run_pre_expiry_sweep(
+        symbol,
+        entry_dte_min=entry_dte_min,
+        entry_dte_max=entry_dte_max,
+        exit_dte_min=exit_dte_min,
+        exit_dte_max=exit_dte_max,
+        min_trades=min_trades,
+        data_frequency=frequency,
+        daily_agg_config=daily_agg_config,
+        verbose=verbose,
+    )
+
+    if df is None or df.empty:
+        typer.echo("No parameter combinations produced any trades (or none met min_trades).")
+    else:
+        best = df.iloc[0]
+        typer.echo(
+            f"Best: entry_dte={int(best['entry_dte'])}, exit_dte={int(best['exit_dte'])} "
+            f"| trades={int(best['total_trades'])} | net P&L=${float(best['total_pnl']):,.2f}"
+        )
 
 
 @app.command()

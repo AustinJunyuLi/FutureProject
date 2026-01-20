@@ -31,7 +31,7 @@ pip install -e .
 Several pipeline stages rely on optional pandas engines and exchange calendars. For end-to-end execution you should install:
 
 - `pyarrow` (or `fastparquet`) for Parquet read/write
-- `pandas-market-calendars` for CME exchange business-day schedules (used for DTE, EOM labeling, expiry ranking)
+- `pandas-market-calendars` for CME exchange business-day schedules (used for DTE + expiry ranking)
 
 These are declared in `pyproject.toml`.
 
@@ -117,7 +117,8 @@ python -m futures_curve.cli stage0 --symbol HG --output metadata
 python -m futures_curve.cli stage1 --symbol HG --input /path/to/organized_data --output data_parquet
 python -m futures_curve.cli stage2 --symbol HG --data data_parquet
 python -m futures_curve.cli stage3 --symbol HG --data data_parquet
-python -m futures_curve.cli stage4 --symbol HG --data data_parquet --strategies dte,eom
+python -m futures_curve.cli stage4 --symbol HG --data data_parquet --strategies pre_expiry
+python -m futures_curve.cli pre-expiry-sweep --symbol HG --data data_parquet
 ```
 
 Build reports:
@@ -152,8 +153,8 @@ Key fields:
 - **Stage 0**: expiry schedule + contract specs + trading calendar
 - **Stage 1**: parse raw 1-minute data; aggregate to hourly buckets and daily bars
 - **Stage 2**: deterministic curve panel (F1..F12), roll share/events, spreads
-- **Stage 3**: analytics (DTE profiles, EOM seasonality, roll event studies, diagnostics)
-- **Stage 4**: backtests (DTE-trigger + EOM)
+- **Stage 3**: analytics (DTE profiles, roll event studies, diagnostics)
+- **Stage 4**: backtests (pre-expiry window + liquidity-trigger variants)
 
 ## Technical implementation details (from the technical report)
 
@@ -203,8 +204,6 @@ Buckets are defined in exchange time (CT):
 
 ### Stage 3 analytics
 
-- **EOM labels** are computed using CME business days (not calendar days).
-- Daily EOM dataset uses US‑session buckets only (1–7), and avoids mixing near/far pairs intra‑day.
 - Roll event study anchors on `roll_peak_trade_date` (fallback to `roll_start_trade_date` if missing).
 
 ### Backtests (Stage 4)

@@ -40,7 +40,7 @@ backtest:
   tick_size: 0.0005
   tick_value: 12.50
   initial_capital: 100000
-  # Archive EOM report is gross of stop-loss logic; disable here for consistency.
+  # Archive analysis report is gross of stop-loss logic; disable here for consistency.
   stop_loss_usd: null
 
 buckets:

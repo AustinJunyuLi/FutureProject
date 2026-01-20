@@ -58,7 +58,7 @@ class AnalysisVisualizer:
         cbar0.set_label("Win Rate (%)", fontsize=FONT_SETTINGS["label_size"])
         cbar0.ax.tick_params(labelsize=FONT_SETTINGS["tick_size"])
         axes[0].set_title(
-            f"{symbol} EOM Strategy Win Rate by Month",
+            f"{symbol} Win Rate by Calendar Month",
             fontsize=FONT_SETTINGS["title_size"],
             fontweight="bold",
             pad=12,
@@ -90,7 +90,7 @@ class AnalysisVisualizer:
         cbar1.set_label("Mean Return (%)", fontsize=FONT_SETTINGS["label_size"])
         cbar1.ax.tick_params(labelsize=FONT_SETTINGS["tick_size"])
         axes[1].set_title(
-            f"{symbol} EOM Mean Spread Return by Month",
+            f"{symbol} Mean Return by Calendar Month",
             fontsize=FONT_SETTINGS["title_size"],
             fontweight="bold",
             pad=12,
@@ -239,81 +239,6 @@ class AnalysisVisualizer:
 
         if output_path is None:
             output_path = self.output_dir / f"{symbol}_roll_event_study.pdf"
-
-        fig.savefig(output_path, **FIGURE_DEFAULTS)
-        plt.close(fig)
-        return output_path
-
-    def plot_eom_returns_distribution(
-        self,
-        df: pd.DataFrame,
-        symbol: str,
-        output_path: Optional[Path] = None,
-    ) -> Path:
-        """Create histogram of EOM returns colored by sign."""
-        fig, ax = plt.subplots(figsize=PLOT_SETTINGS["histogram"]["figsize"])
-
-        returns = df["spread_return"] * 100  # Convert to percentage
-
-        # Separate positive and negative returns
-        pos_returns = returns[returns >= 0]
-        neg_returns = returns[returns < 0]
-
-        bins = np.linspace(returns.min(), returns.max(), PLOT_SETTINGS["histogram"]["bins"])
-
-        # Plot positive returns
-        ax.hist(
-            pos_returns,
-            bins=bins,
-            color=ACADEMIC_PALETTE["positive"],
-            alpha=PLOT_SETTINGS["histogram"]["alpha"],
-            edgecolor=PLOT_SETTINGS["histogram"]["edgecolor"],
-            linewidth=PLOT_SETTINGS["histogram"]["linewidth"],
-            label=f"Gains (n={len(pos_returns)})",
-        )
-
-        # Plot negative returns
-        ax.hist(
-            neg_returns,
-            bins=bins,
-            color=ACADEMIC_PALETTE["negative"],
-            alpha=PLOT_SETTINGS["histogram"]["alpha"],
-            edgecolor=PLOT_SETTINGS["histogram"]["edgecolor"],
-            linewidth=PLOT_SETTINGS["histogram"]["linewidth"],
-            label=f"Losses (n={len(neg_returns)})",
-        )
-
-        # Add statistics
-        mean_ret = returns.mean()
-        median_ret = returns.median()
-        ax.axvline(
-            x=mean_ret,
-            color=ACADEMIC_PALETTE["primary"],
-            linestyle="--",
-            linewidth=2,
-            label=f"Mean: {mean_ret:.2f}%",
-        )
-        ax.axvline(
-            x=median_ret,
-            color=ACADEMIC_PALETTE["accent1"],
-            linestyle=":",
-            linewidth=2,
-            label=f"Median: {median_ret:.2f}%",
-        )
-
-        apply_style(
-            ax,
-            title=f"{symbol} End-of-Month Spread Return Distribution",
-            xlabel="Spread Return (%)",
-            ylabel="Frequency",
-        )
-        ax.legend(loc="upper right", fontsize=FONT_SETTINGS["legend_size"],
-                 framealpha=0.9)
-
-        plt.tight_layout()
-
-        if output_path is None:
-            output_path = self.output_dir / f"{symbol}_eom_returns_dist.pdf"
 
         fig.savefig(output_path, **FIGURE_DEFAULTS)
         plt.close(fig)
@@ -844,13 +769,6 @@ class AnalysisVisualizer:
             df = pd.read_parquet(event_path)
             if _has_cols(df, ["mean"]) and ("rel_bday" in df.columns or "rel_day" in df.columns):
                 outputs["roll_event"] = self.plot_roll_event_study(df, symbol)
-
-        # EOM returns distribution
-        eom_path = tables_dir / f"{symbol}_eom_returns.parquet"
-        if eom_path.exists():
-            df = pd.read_parquet(eom_path)
-            if _has_cols(df, ["spread_return"]):
-                outputs["eom_returns"] = self.plot_eom_returns_distribution(df, symbol)
 
         # NEW: Try to load spread data for new plots
         if data_dir is not None:

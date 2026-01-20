@@ -5,7 +5,7 @@ This module primarily targets the CME Globex calendars via `pandas_market_calend
 Important design note
 ---------------------
 The pipeline's methodological invariants require *exchange business days* (not merely
-Mon–Fri civil days) for DTE, EOM labeling, and roll-window alignment.
+Mon–Fri civil days) for DTE and roll-window alignment.
 
 `pandas_market_calendars` is the intended source of truth. However, the repository's
 README claims `pytest -q` should work after a fresh install, and the library is not

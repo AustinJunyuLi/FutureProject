@@ -14,7 +14,7 @@ from futures_curve.stage4.backtester import Backtester
 from futures_curve.stage4.strategies import (
     Strategy,
     DTEStrategy,
-    EOMStrategy,
+    PreExpiryStrategy,
     Signal,
     get_strategy,
 )
@@ -175,15 +175,17 @@ class TestStrategies:
         assert len(entries) >= 1
         assert len(exits) >= 1
 
-    def test_eom_strategy(self):
-        """Test EOM strategy generates signals with next-bucket execution alignment."""
-        strategy = EOMStrategy(entry_offset=3, exit_offset=1, execution_delay_bdays=1)
+    def test_pre_expiry_strategy(self):
+        """Test pre-expiry strategy generates entry/exit signals."""
+        strategy = PreExpiryStrategy(entry_dte=5, exit_dte=1)
 
-        df = pd.DataFrame({
-            "trade_date": pd.date_range("2024-01-25", periods=7),
-            "bucket": [1] * 7,
-            "eom_offset": [6, 5, 4, 3, 2, 1, 0],  # EOM-6 to EOM-0
-        })
+        df = pd.DataFrame(
+            {
+                "trade_date": pd.date_range("2024-01-01", periods=7),
+                "bucket": [1] * 7,
+                "F1_dte_bdays": [7, 6, 5, 4, 3, 2, 1],
+            }
+        )
 
         signals = strategy.generate_signals(df)
 
@@ -193,10 +195,10 @@ class TestStrategies:
         assert len(entries) >= 1
         assert len(exits) >= 1
 
-        # The pipeline uses next-bucket execution. Therefore, by default we signal
-        # one business day earlier: signal on EOM-(N+1) to execute on EOM-N.
-        assert any(s.metadata.get("action") == "entry" and s.metadata.get("eom_offset") == 4 for s in signals)
-        assert any(s.metadata.get("action") == "exit" and s.metadata.get("eom_offset") == 2 for s in signals)
+        # Entry occurs when within the window (<= entry_dte and > exit_dte)
+        assert any(s.metadata.get("action") == "entry" and int(s.metadata.get("dte")) == 5 for s in signals)
+        # Exit occurs when at/through the exit threshold
+        assert any(s.metadata.get("action") == "exit" and int(s.metadata.get("dte")) == 1 for s in signals)
 
         # Guard against same-bucket execution in research backtests
         assert all(s.metadata.get("execution", "next") != "same" for s in signals)
@@ -206,8 +208,8 @@ class TestStrategies:
         strategy = get_strategy("dte", dte_entry=20, dte_exit=10)
         assert isinstance(strategy, DTEStrategy)
 
-        strategy = get_strategy("eom", entry_offset=5, exit_offset=2)
-        assert isinstance(strategy, EOMStrategy)
+        strategy = get_strategy("pre_expiry", entry_dte=5, exit_dte=1)
+        assert isinstance(strategy, PreExpiryStrategy)
 
 
 class TestPerformanceAnalyzer:

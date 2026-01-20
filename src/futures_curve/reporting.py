@@ -35,7 +35,6 @@ GLOSSARY_TERMS = {
     "S1_raw": "Spread in price units (e.g., dollars per pound for copper).",
     "S1_pct": "Normalized spread as percentage: (F2 - F1) / F1.",
     "DTE": "Days to Expiry; business days remaining until contract expiration.",
-    "EOM": "End of Month; refers to the last few trading days of each calendar month.",
     "Contango": "Market state where S1 > 0 (deferred contracts trade at premium to front).",
     "Backwardation": "Market state where S1 < 0 (front contracts trade at premium to deferred).",
     "Roll": "The transition of trading activity from F1 to F2 as F1 approaches expiry.",
@@ -91,15 +90,11 @@ DEFAULT_CONFIG = {
         ("commission_per_contract", "2.50", "Commission per contract per side (USD)"),
         ("tick_value", "12.50", "Dollar value per tick (HG)"),
     ],
-    "DTE Strategy": [
-        ("entry_dte", "15", "Enter when 5 < F1_dte_bdays <= entry_dte (executed next observation)"),
-        ("exit_dte", "5", "Exit when F1_dte_bdays <= exit_dte (executed next observation)"),
+    "Pre-Expiry Strategy": [
+        ("entry_dte", "5", "Enter when F1_dte_bdays <= entry_dte and > exit_dte (expiry-anchored)"),
+        ("exit_dte", "1", "Exit when F1_dte_bdays <= exit_dte (expiry-anchored)"),
         ("direction", "long", "Trade direction (long/short spread)"),
-    ],
-    "EOM Strategy": [
-        ("entry_offset", "3", "Execute entry on EOM-3 (signal on EOM-4 under next-observation execution)"),
-        ("exit_offset", "1", "Execute exit on EOM-1 (signal on EOM-2 under next-observation execution)"),
-        ("direction", "long", "Trade direction (long/short spread)"),
+        ("sweep", "entry_dte=2..10; exit_dte=0..3", "Grid-search around the last few business days before expiry"),
     ],
 }
 
@@ -222,7 +217,7 @@ def _get_sample_trades(trades_path: Path, n: int = 10) -> Optional[pd.DataFrame]
     if log_path.exists():
         df = pd.read_parquet(log_path)
     else:
-        # Fall back to any strategy trades file (e.g., eom_trades.parquet).
+        # Fall back to any strategy trades file (e.g., pre_expiry_trades.parquet).
         trade_files = sorted(trades_path.glob("*_trades.parquet"))
         if not trade_files:
             return None
@@ -301,7 +296,7 @@ backtest results.
     \item Construct continuous futures curves (F1 through F12) with deterministic contract ranking
     \item Calculate and analyze calendar spreads (S1 = F2 - F1)
     \item Detect contract roll events using volume share thresholds
-    \item Run backtests on DTE-based and end-of-month (EOM) spread strategies
+    \item Run backtests on expiry-anchored (\texttt{{pre\_expiry}}) and liquidity-trigger spread strategies
     \item Model realistic transaction costs (slippage + commissions)
     \item Generate publication-quality visualizations and PDF reports
 \end{{itemize}}
@@ -543,7 +538,6 @@ Roll End & $s \geq 75\%$ & Transition complete \\
 
 \textbf{{Analyses Performed:}}
 \begin{{itemize}}
-    \item \textbf{{Seasonality:}} Mean spread return by calendar month
     \item \textbf{{DTE Lifecycle:}} Spread behavior by days-to-expiry bin
     \item \textbf{{Roll Event Study:}} Mean spread path $\pm$10 days around roll
     \item \textbf{{Diagnostics:}} Data quality checks, outlier counts
@@ -560,8 +554,7 @@ Roll End & $s \geq 75\%$ & Transition complete \\
 \hline
 \textbf{{Strategy}} & \textbf{{Entry Signal}} & \textbf{{Exit Signal}} & \textbf{{Default Direction}} \\
 \hline
-DTE & F1 DTE = 20 & F1 DTE = 5 & Short spread \\
-EOM & Last 3 days of month & First 2 days of next month & Long spread \\
+pre\_expiry & $\texttt{{exit\_dte}} < \texttt{{F1\_dte\_bdays}} \le \texttt{{entry\_dte}}$ & $\texttt{{F1\_dte\_bdays}} \le \texttt{{exit\_dte}}$ & Long spread \\
 \hline
 \end{{tabular}}
 \end{{center}}
@@ -573,7 +566,7 @@ EOM & Last 3 days of month & First 2 days of next month & Long spread \\
 \textbf{{Column}} & \textbf{{Type}} & \textbf{{Description}} \\
 \hline
 trade\_id & int & Unique trade identifier \\
-strategy & string & Strategy name (DTE/EOM) \\
+strategy & string & Strategy name (e.g., pre\_expiry) \\
 entry\_date & datetime & Entry timestamp \\
 exit\_date & datetime & Exit timestamp \\
 direction & string & long/short \\
@@ -614,13 +607,9 @@ backtest:
   tick_value: 12.50
 
 strategies:
-  dte:
-    entry_dte: 15
-    exit_dte: 5
-    direction: long
-  eom:
-    entry_offset: 3
-    exit_offset: 1
+  pre_expiry:
+    entry_dte: 5
+    exit_dte: 1
     direction: long
 \end{{verbatim}}
 
@@ -849,13 +838,14 @@ def build_analysis_report(
 
     # Load key tables
     diagnostics = _read_parquet_optional(paths.tables_dir / f"{symbol}_diagnostics.parquet")
-    seasonal = _read_parquet_optional(paths.tables_dir / f"{symbol}_seasonal_summary.parquet")
     dte_profile = _read_parquet_optional(paths.tables_dir / f"{symbol}_dte_profile.parquet")
     backtest_summary = _read_parquet_optional(paths.data_dir / "trades" / symbol / "summary.parquet")
-    eom_daily = _read_parquet_optional(paths.tables_dir / f"{symbol}_eom_daily.parquet")
+    spread_panel = _read_parquet_optional(paths.data_dir / "spreads" / symbol / "spreads_panel.parquet")
     qc_stats = _read_parquet_optional(paths.data_dir / "qc" / f"{symbol}_qc.parquet")
-    eom_stop_loss = _read_parquet_optional(paths.data_dir / "trades" / symbol / "eom_stop_loss_sensitivity.parquet")
-    dte_stop_loss = _read_parquet_optional(paths.data_dir / "trades" / symbol / "dte_stop_loss_sensitivity.parquet")
+    pre_expiry_sweep = _read_parquet_optional(paths.data_dir / "trades" / symbol / "pre_expiry_sweep.parquet")
+    pre_expiry_stop_loss = _read_parquet_optional(
+        paths.data_dir / "trades" / symbol / "pre_expiry_stop_loss_sensitivity.parquet"
+    )
 
     # Load sample trades for appendix
     sample_trades = _get_sample_trades(paths.data_dir / "trades" / symbol, n=15)
@@ -877,10 +867,10 @@ def build_analysis_report(
     bucket_tex = _df_to_latex(bucket_tbl, floatfmt=".0f", column_format="rllp{8cm}")
 
     # Coverage / data facts (prefer actual artifacts over hard-coded claims)
-    if eom_daily is not None and not eom_daily.empty and "trade_date" in eom_daily.columns:
-        td_min = pd.to_datetime(eom_daily["trade_date"]).min().date()
-        td_max = pd.to_datetime(eom_daily["trade_date"]).max().date()
-        n_trade_days = int(pd.to_datetime(eom_daily["trade_date"]).nunique())
+    if spread_panel is not None and not spread_panel.empty and "trade_date" in spread_panel.columns:
+        td_min = pd.to_datetime(spread_panel["trade_date"]).min().date()
+        td_max = pd.to_datetime(spread_panel["trade_date"]).max().date()
+        n_trade_days = int(pd.to_datetime(spread_panel["trade_date"]).nunique())
     else:
         td_min = None
         td_max = None
@@ -906,10 +896,8 @@ def build_analysis_report(
     # Backtest performance table with cost decomposition (derived from trade logs).
     def _cost_breakdown(trades_dir: Path) -> pd.DataFrame:
         records: list[dict] = []
-        for strat in ["eom", "dte"]:
-            p = trades_dir / f"{strat}_trades.parquet"
-            if not p.exists():
-                continue
+        for p in sorted(trades_dir.glob("*_trades.parquet")):
+            strat = p.stem.replace("_trades", "")
             df = pd.read_parquet(p)
             if df.empty or "pnl" not in df.columns:
                 continue
@@ -981,16 +969,16 @@ def build_analysis_report(
             return "N/A"
 
     if perf_df is not None and not perf_df.empty:
-        eom_metrics = perf_df[perf_df["strategy"] == "eom"].iloc[0].to_dict() if (perf_df["strategy"] == "eom").any() else {}
-        dte_metrics = perf_df[perf_df["strategy"] == "dte"].iloc[0].to_dict() if (perf_df["strategy"] == "dte").any() else {}
+        pre_expiry_metrics = (
+            perf_df[perf_df["strategy"] == "pre_expiry"].iloc[0].to_dict()
+            if (perf_df["strategy"] == "pre_expiry").any()
+            else {}
+        )
     else:
-        eom_metrics = {}
-        dte_metrics = {}
+        pre_expiry_metrics = {}
 
-    eom_net_str = _fmt_signed_money(eom_metrics.get("total_pnl"))
-    eom_sharpe_str = _fmt_float(eom_metrics.get("sharpe_ratio"))
-    dte_net_str = _fmt_signed_money(dte_metrics.get("total_pnl"))
-    dte_sharpe_str = _fmt_float(dte_metrics.get("sharpe_ratio"))
+    pre_expiry_net_str = _fmt_signed_money(pre_expiry_metrics.get("total_pnl"))
+    pre_expiry_sharpe_str = _fmt_float(pre_expiry_metrics.get("sharpe_ratio"))
 
     # Stop-loss sensitivity tables (robustness section)
     def _stop_loss_tex(df: Optional[pd.DataFrame]) -> str:
@@ -1011,18 +999,25 @@ def build_analysis_report(
         out = out[keep]
         return _df_to_latex(out, floatfmt=".2f")
 
-    eom_sl_tex = _stop_loss_tex(eom_stop_loss)
-    dte_sl_tex = _stop_loss_tex(dte_stop_loss)
+    pre_expiry_sl_tex = _stop_loss_tex(pre_expiry_stop_loss)
 
-    # Format tables
-    if seasonal is not None and not seasonal.empty:
-        seasonal_fmt = seasonal.copy()
-        if "mean_return" in seasonal_fmt.columns:
-            seasonal_fmt["mean_return_pct"] = seasonal_fmt["mean_return"] * 100
-            seasonal_fmt = seasonal_fmt.drop(columns=["mean_return"])
-        seasonal_tex = _df_to_latex(seasonal_fmt, floatfmt=".2f")
+    # Pre-expiry sweep table (top rows)
+    if pre_expiry_sweep is not None and not pre_expiry_sweep.empty:
+        sweep_fmt = pre_expiry_sweep.copy()
+        keep = [
+            "entry_dte",
+            "exit_dte",
+            "total_trades",
+            "win_rate",
+            "total_pnl",
+            "sharpe_ratio",
+            "max_drawdown_pct",
+        ]
+        keep = [c for c in keep if c in sweep_fmt.columns]
+        sweep_fmt = sweep_fmt[keep].head(15)
+        sweep_tex = _df_to_latex(sweep_fmt, floatfmt=".2f")
     else:
-        seasonal_tex = "\\emph{(No seasonal summary found)}"
+        sweep_tex = "\\emph{(No sweep results found)}"
 
     if dte_profile is not None and not dte_profile.empty:
         dte_fmt = dte_profile.copy()
@@ -1090,15 +1085,15 @@ def build_analysis_report(
 %==============================================================================
 
 This report documents a reproducible analysis of the \textbf{{{symbol}}} front calendar spread
-($S1 = F2 - F1$) and evaluates two simple systematic rules (EOM and DTE) under an explicit execution
+($S1 = F2 - F1$) and evaluates an expiry-anchored \texttt{{pre\_expiry}} trading rule under an explicit execution
 and transaction-cost model.
 
 \subsection{{Key Findings}}
 
 \begin{{itemize}}
     \item \textbf{{Data coverage:}} {contracts_str} contracts; {minute_rows_str} 1-minute bars; {analysis_start_str} to {analysis_end_str} ({trade_days_str} trade dates).
-    \item \textbf{{Market structure:}} {symbol} is often in contango, with measurable variation across the contract lifecycle (DTE) and around month-end (EOM).
-    \item \textbf{{Profitability (net of costs):}} EOM is profitable in this sample (net P\&L {eom_net_str}, Sharpe {eom_sharpe_str}); DTE is not (net P\&L {dte_net_str}, Sharpe {dte_sharpe_str}).
+    \item \textbf{{Market structure:}} {symbol} is often in contango, with measurable variation across the contract lifecycle (DTE) and roll activity.
+    \item \textbf{{Profitability (net of costs):}} \texttt{{pre\_expiry}} net P\&L {pre_expiry_net_str}, Sharpe {pre_expiry_sharpe_str} (this run).
     \item \textbf{{Interpretation:}} Results are conditional on the execution proxy (bucket/daily closes) and the transaction cost model; sensitivity analyses are provided in Sections 9--10.
 \end{{itemize}}
 
@@ -1144,7 +1139,7 @@ The pipeline produces:
 \begin{{itemize}}
   \item Contract-level bucket OHLCV (Stage 1)
   \item Deterministic curve panel (F1..F12) and spreads (Stage 2)
-  \item Daily US-session $S1$ proxy with EOM labels (Stage 3)
+  \item Lifecycle profiles, roll event studies, and diagnostics (Stage 3)
   \item Backtests with trade logs and equity curves (Stage 4)
 \end{{itemize}}
 
@@ -1219,21 +1214,6 @@ s(t) = \frac{{V_{{F2}}(t)}}{{V_{{F1}}(t) + V_{{F2}}(t)}}
 
 Roll phases: Start ($s \geq 25\%$), Peak ($s \geq 50\%$), End ($s \geq 75\%$).
 
-\subsection{{End-of-Month (EOM) labeling and daily proxy}}
-
-EOM offsets are defined on the business-day calendar:
-\begin{{itemize}}
-    \item \texttt{{EOM-0}}: last business day of the month
-    \item \texttt{{EOM-1}}: second-to-last business day
-    \item \texttt{{EOM-k}}: $k$ business days before month-end
-\end{{itemize}}
-
-For EOM analysis and the EOM backtest, we use a daily US-session proxy for $S1$ (09:00--15:59 CT):
-\begin{{itemize}}
-    \item Compute a volume-weighted average of bucket $S1$ within the US session.
-    \item If the $(S1\_near, S1\_far)$ pair changes intraday (e.g., around expiry), the day is filtered to a single representative pair to avoid mixing different spreads.
-\end{{itemize}}
-
 %==============================================================================
 \section{{Spread Characteristics}}
 %==============================================================================
@@ -1292,32 +1272,11 @@ increased volatility due to roll activity.
 \end{{figure}}
 
 %==============================================================================
-\section{{Seasonality Analysis}}
+\section{{Intraday Patterns}}
 %==============================================================================
 
-\subsection{{Monthly Patterns}}
-
-\begin{{figure}}[H]
-\centering
-\IfFileExists{{../figures/{symbol}_seasonality_heatmap.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_seasonality_heatmap.pdf}}
-}}{{
-    \emph{{(Figure not available)}}
-}}
-\caption{{EOM strategy win rate and mean return by calendar month. Darker colors
-    indicate stronger performance.}}
-\end{{figure}}
-
-\begin{{table}}[H]
-\centering
-{seasonal_tex}
-\caption{{Monthly seasonality statistics for EOM spread returns.}}
-\end{{table}}
-
-\textbf{{Statistical Interpretation:}} Monthly patterns should be interpreted with
-caution given the limited number of observations per month-year combination. The
-table shows mean returns, but confidence intervals may be wide for months with
-fewer observations.
+Bucket-level aggregation allows a simple view of how the spread behaves by
+time-of-day and calendar month. These plots are descriptive only (no costs).
 
 \subsection{{Bucket-Level Analysis}}
 
@@ -1331,26 +1290,6 @@ fewer observations.
 \caption{{Mean spread by trading bucket and calendar month, showing intraday and
     seasonal interaction effects.}}
 \end{{figure}}
-
-\subsection{{End-of-Month Effect}}
-
-\begin{{figure}}[H]
-\centering
-\IfFileExists{{../figures/{symbol}_eom_returns_dist.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_eom_returns_dist.pdf}}
-}}{{
-    \emph{{(Figure not available)}}
-}}
-\caption{{Distribution of end-of-month spread returns showing positive skew
-    and the empirical shape of the EOM window returns (descriptive; no costs).}}
-\end{{figure}}
-
-\textbf{{Economic hypothesis (informal):}} End-of-month effects in commodity spreads may reflect:
-\begin{{itemize}}
-    \item Index rebalancing by commodity funds
-    \item Month-end position squaring by dealers
-    \item Futures roll timing for commodity indices (e.g., GSCI, BCOM)
-\end{{itemize}}
 
 %==============================================================================
 \section{{Roll Dynamics}}
@@ -1397,8 +1336,7 @@ across roll events.
 \hline
 \textbf{{Strategy}} & \textbf{{Entry Rule}} & \textbf{{Exit Rule}} & \textbf{{Direction}} \\
 \hline
-DTE & First signal when $5 < \texttt{{F1\_dte\_bdays}} \le 15$ (executed next observation) & First signal when $\texttt{{F1\_dte\_bdays}} \le 5$ (executed next observation) & Long $S1$ \\
-EOM & Executed entry on \texttt{{EOM-3}} (signal generated on \texttt{{EOM-4}}) & Executed exit on \texttt{{EOM-1}} (signal generated on \texttt{{EOM-2}}) & Long $S1$ \\
+PRE\_EXPIRY & First signal when \texttt{{exit\_dte}} $< \texttt{{F1\_dte\_bdays}} \le$ \texttt{{entry\_dte}} (executed next observation) & First signal when $\texttt{{F1\_dte\_bdays}} \le$ \texttt{{exit\_dte}} (executed next observation) & Long $S1$ \\
 \hline
 \end{{tabular}}
 \end{{center}}
@@ -1418,6 +1356,14 @@ Round-trip cost & \$60.00 & 4 fills $\times$ (\$12.50 + \$2.50) \\
 \end{{tabular}}
 \end{{center}}
 
+\subsection{{Pre-Expiry Parameter Sweep}}
+
+\begin{{table}}[H]
+\centering
+{sweep_tex}
+\caption{{Top \texttt{{pre\_expiry}} entry/exit windows ranked by net P\&L (after costs).}}
+\end{{table}}
+
 \subsection{{Performance Summary}}
 
 \begin{{table}}[H]
@@ -1430,23 +1376,13 @@ Round-trip cost & \$60.00 & 4 fills $\times$ (\$12.50 + \$2.50) \\
 
 \begin{{figure}}[H]
 \centering
-\IfFileExists{{../figures/{symbol}_eom_equity.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_eom_equity.pdf}}
+\IfFileExists{{../figures/{symbol}_pre_expiry_equity.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_pre_expiry_equity.pdf}}
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{EOM strategy equity curve with drawdown overlay showing cumulative
+\caption{{\texttt{{pre\_expiry}} strategy equity curve with drawdown overlay showing cumulative
     net P\&L over time.}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\IfFileExists{{../figures/{symbol}_dte_equity.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_equity.pdf}}
-}}{{
-    \emph{{(Figure not available)}}
-}}
-\caption{{DTE strategy equity curve with drawdown overlay.}}
 \end{{figure}}
 
 \subsection{{Strategy Comparison}}
@@ -1465,46 +1401,26 @@ Round-trip cost & \$60.00 & 4 fills $\times$ (\$12.50 + \$2.50) \\
 
 \begin{{figure}}[H]
 \centering
-\IfFileExists{{../figures/{symbol}_eom_pnl_dist.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_eom_pnl_dist.pdf}}
+\IfFileExists{{../figures/{symbol}_pre_expiry_pnl_dist.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_pre_expiry_pnl_dist.pdf}}
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{Distribution of trade P\&L for the EOM strategy showing win/loss
+\caption{{Distribution of trade P\&L for the \texttt{{pre\_expiry}} strategy showing win/loss
     magnitude asymmetry.}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\IfFileExists{{../figures/{symbol}_dte_pnl_dist.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_pnl_dist.pdf}}
-}}{{
-    \emph{{(Figure not available)}}
-}}
-\caption{{Distribution of trade P\&L for the DTE strategy.}}
 \end{{figure}}
 
 \subsection{{Monthly Returns}}
 
 \begin{{figure}}[H]
 \centering
-\IfFileExists{{../figures/{symbol}_eom_monthly_heatmap.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_eom_monthly_heatmap.pdf}}
+\IfFileExists{{../figures/{symbol}_pre_expiry_monthly_heatmap.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_pre_expiry_monthly_heatmap.pdf}}
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{Year-by-month P\&L heatmap for the EOM strategy showing performance
+\caption{{Year-by-month P\&L heatmap for the \texttt{{pre\_expiry}} strategy showing performance
     consistency across time.}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\IfFileExists{{../figures/{symbol}_dte_monthly_heatmap.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_monthly_heatmap.pdf}}
-}}{{
-    \emph{{(Figure not available)}}
-}}
-\caption{{Year-by-month P\&L heatmap for the DTE strategy.}}
 \end{{figure}}
 
 %==============================================================================
@@ -1515,23 +1431,13 @@ Round-trip cost & \$60.00 & 4 fills $\times$ (\$12.50 + \$2.50) \\
 
 \begin{{figure}}[H]
 \centering
-\IfFileExists{{../figures/{symbol}_eom_cost_sensitivity.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_eom_cost_sensitivity.pdf}}
+\IfFileExists{{../figures/{symbol}_pre_expiry_cost_sensitivity.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_pre_expiry_cost_sensitivity.pdf}}
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{Strategy profitability sensitivity to slippage and commission assumptions.
+\caption{{\texttt{{pre\_expiry}} strategy profitability sensitivity to slippage and commission assumptions.
     Vertical line indicates baseline assumption.}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\IfFileExists{{../figures/{symbol}_dte_cost_sensitivity.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_cost_sensitivity.pdf}}
-}}{{
-    \emph{{(Figure not available)}}
-}}
-\caption{{DTE strategy cost sensitivity to slippage and commission assumptions (same methodology as EOM).}}
 \end{{figure}}
 
 \subsection{{Break-Even Analysis}}
@@ -1544,7 +1450,7 @@ sensitivity figure shows:
     \item Margin of safety relative to realistic cost estimates
 \end{{itemize}}
 
-\textbf{{Discussion:}} In this run, the EOM strategy remains profitable under a wide range of costs. The DTE strategy remains unprofitable even under very low costs, indicating that (for this definition) the edge is negative before costs.
+\textbf{{Discussion:}} The cost sensitivity plot shows how robust the strategy is to plausible slippage/commission assumptions. A strategy that remains profitable under conservative costs is more credible.
 
 \subsection{{Stop-Loss Sensitivity (robustness check)}}
 
@@ -1553,34 +1459,18 @@ if the \textbf{{gross}} mark-to-market P\&L (excluding costs) falls below \textt
 
 \begin{{figure}}[H]
 \centering
-\IfFileExists{{../figures/{symbol}_eom_stop_loss_sensitivity.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_eom_stop_loss_sensitivity.pdf}}
+\IfFileExists{{../figures/{symbol}_pre_expiry_stop_loss_sensitivity.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_pre_expiry_stop_loss_sensitivity.pdf}}
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{EOM stop-loss sensitivity.}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\IfFileExists{{../figures/{symbol}_dte_stop_loss_sensitivity.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_stop_loss_sensitivity.pdf}}
-}}{{
-    \emph{{(Figure not available)}}
-}}
-\caption{{DTE stop-loss sensitivity.}}
+\caption{{\texttt{{pre\_expiry}} stop-loss sensitivity.}}
 \end{{figure}}
 
 \begin{{table}}[H]
 \centering
-{eom_sl_tex}
-\caption{{EOM stop-loss sensitivity table (net of costs).}}
-\end{{table}}
-
-\begin{{table}}[H]
-\centering
-{dte_sl_tex}
-\caption{{DTE stop-loss sensitivity table (net of costs).}}
+{pre_expiry_sl_tex}
+\caption{{\texttt{{pre\_expiry}} stop-loss sensitivity table (net of costs).}}
 \end{{table}}
 
 %==============================================================================
@@ -1591,44 +1481,24 @@ if the \textbf{{gross}} mark-to-market P\&L (excluding costs) falls below \textt
 
 \begin{{figure}}[H]
 \centering
-\IfFileExists{{../figures/{symbol}_eom_rolling_performance.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_eom_rolling_performance.pdf}}
+\IfFileExists{{../figures/{symbol}_pre_expiry_rolling_performance.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_pre_expiry_rolling_performance.pdf}}
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{EOM rolling Sharpe ratio and win rate (20-trade window).}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\IfFileExists{{../figures/{symbol}_dte_rolling_performance.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_rolling_performance.pdf}}
-}}{{
-    \emph{{(Figure not available)}}
-}}
-\caption{{DTE rolling Sharpe ratio and win rate (20-trade window).}}
+\caption{{\texttt{{pre\_expiry}} rolling Sharpe ratio and win rate (20-trade window).}}
 \end{{figure}}
 
 \subsection{{Cumulative Monthly P\&L}}
 
 \begin{{figure}}[H]
 \centering
-\IfFileExists{{../figures/{symbol}_eom_cumulative_monthly.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_eom_cumulative_monthly.pdf}}
+\IfFileExists{{../figures/{symbol}_pre_expiry_cumulative_monthly.pdf}}{{
+    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_pre_expiry_cumulative_monthly.pdf}}
 }}{{
     \emph{{(Figure not available)}}
 }}
-\caption{{EOM monthly P\&L breakdown with cumulative total.}}
-\end{{figure}}
-
-\begin{{figure}}[H]
-\centering
-\IfFileExists{{../figures/{symbol}_dte_cumulative_monthly.pdf}}{{
-    \includegraphics[width=0.95\textwidth]{{../figures/{symbol}_dte_cumulative_monthly.pdf}}
-}}{{
-    \emph{{(Figure not available)}}
-}}
-\caption{{DTE monthly P\&L breakdown with cumulative total.}}
+\caption{{\texttt{{pre\_expiry}} monthly P\&L breakdown with cumulative total.}}
 \end{{figure}}
 
 %==============================================================================
@@ -1647,15 +1517,15 @@ if the \textbf{{gross}} mark-to-market P\&L (excluding costs) falls below \textt
 during volatile periods.
 
 \textbf{{Mitigation:}} Sensitivity analysis tests a wide range of cost assumptions.
-For HG, the EOM strategy remains profitable under a wide range of costs; the DTE strategy does not.
+Results should be interpreted alongside these robustness checks.
 
 \subsection{{Limited Strategy Variants}}
 
-\textbf{{Concern:}} Only two strategy variants (DTE, EOM) were tested. Results
-may reflect data mining if many strategies were tried.
+\textbf{{Concern:}} Parameter sweeps over multiple entry/exit windows can overfit
+the historical sample.
 
-\textbf{{Mitigation:}} Strategy selection was hypothesis-driven based on economic
-rationale, not curve-fitted to the data.
+\textbf{{Mitigation:}} Prefer stable regions in the sweep surface (not a single best cell),
+and validate chosen parameters out-of-sample (walk-forward or holdout period).
 
 \subsection{{Single Commodity Focus}}
 
@@ -1679,23 +1549,17 @@ not delisted due to performance).
 
 \begin{{enumerate}}
     \item \textbf{{Spread Dynamics:}} {symbol} calendar spreads exhibit systematic
-          patterns related to contract lifecycle (DTE) and calendar effects (EOM)
-    \item \textbf{{Seasonality:}} Monthly patterns exist but require careful
-          statistical treatment given sample size limitations
+          patterns related to contract lifecycle (DTE) and roll dynamics
     \item \textbf{{Roll Behavior:}} Volume share transition provides a reliable
           signal for roll timing
-    \item \textbf{{Strategy Viability (HG):}} EOM is profitable net of transaction costs in this sample; DTE is not (under this rule definition)
+    \item \textbf{{Strategy Viability ({symbol}):}} \texttt{{pre\_expiry}} performance depends on the chosen entry/exit window and the assumed execution costs; sweep results highlight the best in-sample windows.
 \end{{enumerate}}
 
 \subsection{{Strategy Viability Assessment}}
 
 Based on the backtest results:
 \begin{{itemize}}
-    \item \textbf{{EOM Strategy:}} Economically motivated by index rebalancing;
-          positive Sharpe ratio with acceptable drawdowns
-    \item \textbf{{DTE Strategy:}} Not profitable in this sample under the baseline rule; further work is needed to refine the hypothesis or the implementation
-    \item \textbf{{Combined:}} Low correlation between strategies suggests
-          diversification benefit
+    \item \textbf{{Pre-Expiry Strategy:}} Anchored to F1 expiry (business-day DTE); performance is evaluated net of costs and stress-tested with cost and stop-loss sensitivity.
 \end{{itemize}}
 
 \subsection{{Recommended Next Steps}}
@@ -1703,7 +1567,7 @@ Based on the backtest results:
 \begin{{enumerate}}
     \item \textbf{{Out-of-Sample Testing:}} Reserve recent data for validation
     \item \textbf{{Multi-Commodity Extension:}} Test on GC, CL, and other metals
-    \item \textbf{{Parameter Sensitivity:}} Explore DTE entry/exit thresholds
+    \item \textbf{{Parameter Sensitivity:}} Explore \texttt{{pre\_expiry}} entry/exit DTE windows (and look for stable regions, not a single best cell)
     \item \textbf{{Regime Analysis:}} Condition strategies on volatility regime
     \item \textbf{{Live Paper Trading:}} Forward test with simulated execution
 \end{{enumerate}}
@@ -1733,15 +1597,15 @@ Execution:
   tick_value: 12.50
   initial_capital: 100000
 
-DTE strategy:
-  entry: 5 < F1_dte_bdays <= 15
-  exit:  F1_dte_bdays <= 5
+pre_expiry strategy:
+  entry: exit_dte < F1_dte_bdays <= entry_dte
+  exit:  F1_dte_bdays <= exit_dte
   direction: long S1
 
-EOM strategy:
-  executed entry: EOM-3
-  executed exit:  EOM-1
-  direction: long S1
+Sweep (optional):
+  entry_dte: 2..10
+  exit_dte: 0..3
+  objective: maximize net total_pnl
 \end{{verbatim}}
 
 %==============================================================================

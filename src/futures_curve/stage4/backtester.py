@@ -385,6 +385,8 @@ def run_backtest(
     strategy_name: str,
     strategy_params: Optional[dict] = None,
     execution_config: Optional[dict] = None,
+    data_frequency: str = "bucket",
+    daily_agg_config: Optional[dict] = None,
     stop_loss_usd: Optional[float] = None,
     max_holding_bdays: Optional[int] = None,
     allow_same_bucket_execution: bool = False,
@@ -395,26 +397,35 @@ def run_backtest(
     Args:
         data_dir: Data directory path
         symbol: Commodity symbol
-        strategy_name: Strategy name (dte, liquidity, hybrid, eom)
+        strategy_name: Strategy name (pre_expiry, dte, liquidity, hybrid)
         strategy_params: Strategy parameters
         execution_config: Execution configuration
 
     Returns:
         Backtest results
     """
-    from ..stage2.pipeline import read_spread_panel, read_curve_panel
-    from ..stage3.eom_seasonality import build_eom_daily_dataset
+    from ..stage2.pipeline import read_spread_panel
+    from .aggregation import build_us_session_daily_vwap_panel
 
     data_dir = Path(data_dir)
 
     # Load data
     spread_panel = read_spread_panel(data_dir, symbol)
 
-    # For EOM strategy, need EOM labels
-    if strategy_name.lower() == "eom":
-        spread_panel = build_eom_daily_dataset(spread_panel, spread_col="S1")
+    freq = str(data_frequency or "bucket").lower()
+    if freq in {"bucket", "buckets"}:
+        pass
+    elif freq in {"daily_us_vwap", "us_session_daily_vwap"}:
+        spread_panel = build_us_session_daily_vwap_panel(
+            spread_panel,
+            **(daily_agg_config or {}),
+        )
+    else:
+        raise ValueError("data_frequency must be one of {'bucket','daily_us_vwap'}")
 
     # For liquidity strategy, need volume share
+    if strategy_name.lower() in ["liquidity", "hybrid"] and freq != "bucket":
+        raise ValueError("liquidity/hybrid strategies currently require bucket-frequency roll data")
     if strategy_name.lower() in ["liquidity", "hybrid"]:
         roll_path = data_dir / "roll_events" / symbol / "roll_shares.parquet"
         if roll_path.exists():
@@ -430,8 +441,18 @@ def run_backtest(
     # Create config
     config = ExecutionConfig(**(execution_config or {}))
 
+    # Daily series has only one observation per day. For the expiry-window
+    # strategy, it's more interpretable to execute on the same daily mark
+    # (signal depends only on DTE, not price), otherwise entry/exit shift by 1 day.
+    freq = str(data_frequency or "bucket").lower()
+    strategy_params = dict(strategy_params or {})
+    if freq in {"daily_us_vwap", "us_session_daily_vwap"} and strategy_name.lower() == "pre_expiry":
+        strategy_params.setdefault("execution", "same")
+        if str(strategy_params.get("execution", "next")).lower() == "same":
+            allow_same_bucket_execution = True
+
     # Create strategy
-    strategy = get_strategy(strategy_name, **(strategy_params or {}))
+    strategy = get_strategy(strategy_name, **strategy_params)
 
     # Run backtest
     backtester = Backtester(spread_panel, config)

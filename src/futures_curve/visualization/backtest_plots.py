@@ -30,7 +30,7 @@ class BacktestVisualizer:
         self,
         df: pd.DataFrame,
         symbol: str,
-        strategy: str = "eom",
+        strategy: str = "pre_expiry",
         output_path: Optional[Path] = None,
     ) -> Path:
         """Create equity curve with drawdown overlay."""
@@ -202,7 +202,7 @@ class BacktestVisualizer:
         self,
         df: pd.DataFrame,
         symbol: str,
-        strategy: str = "eom",
+        strategy: str = "pre_expiry",
         output_path: Optional[Path] = None,
     ) -> Path:
         """Create histogram of trade P&L distribution."""
@@ -283,7 +283,7 @@ class BacktestVisualizer:
         self,
         df: pd.DataFrame,
         symbol: str,
-        strategy: str = "eom",
+        strategy: str = "pre_expiry",
         output_path: Optional[Path] = None,
     ) -> Path:
         """Create year x month heatmap of returns."""
@@ -363,7 +363,7 @@ class BacktestVisualizer:
         self,
         df: pd.DataFrame,
         symbol: str,
-        strategy: str = "eom",
+        strategy: str = "pre_expiry",
         output_path: Optional[Path] = None,
     ) -> Path:
         """Create chart showing cumulative P&L broken down by calendar month."""
@@ -448,7 +448,7 @@ class BacktestVisualizer:
         self,
         df: pd.DataFrame,
         symbol: str,
-        strategy: str = "eom",
+        strategy: str = "pre_expiry",
         base_slippage: float = 1.0,
         base_commission: float = 2.50,
         output_path: Optional[Path] = None,
@@ -553,7 +553,7 @@ class BacktestVisualizer:
         self,
         df: pd.DataFrame,
         symbol: str,
-        strategy: str = "eom",
+        strategy: str = "pre_expiry",
         output_path: Optional[Path] = None,
     ) -> Path:
         """Plot how performance changes with different stop-loss thresholds."""
@@ -656,7 +656,7 @@ class BacktestVisualizer:
         self,
         df: pd.DataFrame,
         symbol: str,
-        strategy: str = "eom",
+        strategy: str = "pre_expiry",
         window: int = 20,
         output_path: Optional[Path] = None,
     ) -> Path:
@@ -739,22 +739,16 @@ class BacktestVisualizer:
         trades_dir = Path(trades_dir)
         outputs = {}
 
-        # EOM equity curve
-        eom_equity_path = trades_dir / "eom_equity.parquet"
-        if eom_equity_path.exists():
-            df = pd.read_parquet(eom_equity_path)
+        # Equity curves (one per strategy)
+        for equity_path in sorted(trades_dir.glob("*_equity.parquet")):
+            strategy = equity_path.stem.removesuffix("_equity")
             try:
-                outputs["eom_equity"] = self.plot_equity_curve(df, symbol, "eom")
+                df = pd.read_parquet(equity_path)
+                outputs[f"{strategy}_equity"] = self.plot_equity_curve(df, symbol, strategy)
             except ValueError:
                 pass
-
-        # DTE equity curve
-        dte_equity_path = trades_dir / "dte_equity.parquet"
-        if dte_equity_path.exists():
-            df = pd.read_parquet(dte_equity_path)
-            try:
-                outputs["dte_equity"] = self.plot_equity_curve(df, symbol, "dte")
-            except ValueError:
+            except Exception:
+                # Plotting should never fail the whole report build.
                 pass
 
         # Strategy comparison
@@ -763,64 +757,27 @@ class BacktestVisualizer:
             df = pd.read_parquet(summary_path)
             outputs["strategy_comparison"] = self.plot_strategy_comparison(df, symbol)
 
-        # EOM trade P&L distribution and heatmap
-        eom_trades_path = trades_dir / "eom_trades.parquet"
-        if eom_trades_path.exists():
-            df = pd.read_parquet(eom_trades_path)
+        # Trade-based plots (one per strategy)
+        for trades_path in sorted(trades_dir.glob("*_trades.parquet")):
+            strategy = trades_path.stem.removesuffix("_trades")
             try:
-                outputs["eom_pnl_dist"] = self.plot_trade_pnl_distribution(df, symbol, "eom")
-                outputs["eom_monthly_heatmap"] = self.plot_monthly_returns_heatmap(
-                    df, symbol, "eom"
-                )
-                # New plots
-                outputs["eom_cumulative_monthly"] = self.plot_cumulative_pnl_by_month(
-                    df, symbol, "eom"
-                )
-                outputs["eom_cost_sensitivity"] = self.plot_cost_sensitivity(
-                    df, symbol, "eom"
-                )
-                outputs["eom_rolling_performance"] = self.plot_rolling_performance(
-                    df, symbol, "eom"
-                )
+                df = pd.read_parquet(trades_path)
+                outputs[f"{strategy}_pnl_dist"] = self.plot_trade_pnl_distribution(df, symbol, strategy)
+                outputs[f"{strategy}_monthly_heatmap"] = self.plot_monthly_returns_heatmap(df, symbol, strategy)
+                outputs[f"{strategy}_cumulative_monthly"] = self.plot_cumulative_pnl_by_month(df, symbol, strategy)
+                outputs[f"{strategy}_cost_sensitivity"] = self.plot_cost_sensitivity(df, symbol, strategy)
+                outputs[f"{strategy}_rolling_performance"] = self.plot_rolling_performance(df, symbol, strategy)
             except ValueError:
                 pass
-
-        # EOM stop-loss sensitivity (if available)
-        eom_sl_path = trades_dir / "eom_stop_loss_sensitivity.parquet"
-        if eom_sl_path.exists():
-            try:
-                df = pd.read_parquet(eom_sl_path)
-                outputs["eom_stop_loss_sensitivity"] = self.plot_stop_loss_sensitivity(df, symbol, "eom")
             except Exception:
                 pass
 
-        # DTE trade P&L distribution
-        dte_trades_path = trades_dir / "dte_trades.parquet"
-        if dte_trades_path.exists():
-            df = pd.read_parquet(dte_trades_path)
+        # Stop-loss sensitivity (optional)
+        for sl_path in sorted(trades_dir.glob("*_stop_loss_sensitivity.parquet")):
+            strategy = sl_path.stem.removesuffix("_stop_loss_sensitivity")
             try:
-                outputs["dte_pnl_dist"] = self.plot_trade_pnl_distribution(df, symbol, "dte")
-                outputs["dte_monthly_heatmap"] = self.plot_monthly_returns_heatmap(
-                    df, symbol, "dte"
-                )
-                outputs["dte_cost_sensitivity"] = self.plot_cost_sensitivity(
-                    df, symbol, "dte"
-                )
-                outputs["dte_cumulative_monthly"] = self.plot_cumulative_pnl_by_month(
-                    df, symbol, "dte"
-                )
-                outputs["dte_rolling_performance"] = self.plot_rolling_performance(
-                    df, symbol, "dte"
-                )
-            except ValueError:
-                pass
-
-        # DTE stop-loss sensitivity (if available)
-        dte_sl_path = trades_dir / "dte_stop_loss_sensitivity.parquet"
-        if dte_sl_path.exists():
-            try:
-                df = pd.read_parquet(dte_sl_path)
-                outputs["dte_stop_loss_sensitivity"] = self.plot_stop_loss_sensitivity(df, symbol, "dte")
+                df = pd.read_parquet(sl_path)
+                outputs[f"{strategy}_stop_loss_sensitivity"] = self.plot_stop_loss_sensitivity(df, symbol, strategy)
             except Exception:
                 pass
 

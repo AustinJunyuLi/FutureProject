@@ -1,6 +1,6 @@
 """Stage 3 Pipeline: Analysis layer.
 
-Provides seasonality analysis, lifecycle studies, and diagnostics.
+Provides lifecycle studies and diagnostics.
 """
 
 from pathlib import Path
@@ -10,7 +10,6 @@ from datetime import datetime
 
 from ..stage1.parquet_writer import read_bucket_data
 from ..stage2.pipeline import read_curve_panel, read_spread_panel, read_roll_events
-from .eom_seasonality import EOMSeasonality, build_eom_daily_dataset
 from .lifecycle_analysis import LifecycleAnalyzer, build_lifecycle_dataset
 from .diagnostics import run_full_diagnostics
 
@@ -28,77 +27,6 @@ class Stage3Pipeline:
         # Default mirrors the repository layout: data_parquet/ (data) and research_outputs/ (tables/figures).
         # The CLI can override this (e.g., for reproducible runs to a separate output root).
         self.research_dir = self.data_dir.parent / "research_outputs"
-
-    def run_eom_analysis(
-        self,
-        symbol: str,
-        entry_offset: int = 3,
-        exit_offset: int = 1,
-        verbose: bool = True,
-    ) -> dict:
-        """Run EOM seasonality analysis.
-
-        Args:
-            symbol: Commodity symbol
-            entry_offset: Entry day (EOM-N)
-            exit_offset: Exit day (EOM-N)
-            verbose: Print progress
-
-        Returns:
-            Dictionary with analysis results
-        """
-        if verbose:
-            print(f"Running EOM analysis for {symbol}...")
-
-        # Load spread data
-        spread_panel = read_spread_panel(self.data_dir, symbol)
-
-        # Build daily dataset with EOM labels
-        eom_daily = build_eom_daily_dataset(spread_panel, spread_col="S1")
-
-        # Compute EOM returns
-        analyzer = EOMSeasonality()
-        eom_returns = analyzer.compute_eom_returns(
-            eom_daily,
-            spread_col="S1_pct",
-            entry_offset=entry_offset,
-            exit_offset=exit_offset,
-        )
-
-        # Seasonal summary
-        seasonal_summary = analyzer.seasonal_summary(eom_returns)
-
-        # Save outputs
-        output_dir = self.research_dir / "tables"
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        eom_returns.to_parquet(output_dir / f"{symbol}_eom_returns.parquet", index=False)
-        seasonal_summary.to_parquet(output_dir / f"{symbol}_seasonal_summary.parquet", index=False)
-
-        # Also save daily dataset
-        eom_daily.to_parquet(output_dir / f"{symbol}_eom_daily.parquet", index=False)
-
-        results = {
-            "symbol": symbol,
-            "total_trades": len(eom_returns),
-            "mean_return": eom_returns["spread_return"].mean() if len(eom_returns) > 0 else None,
-            "win_rate": (eom_returns["spread_return"] > 0).mean() * 100 if len(eom_returns) > 0 else None,
-            "best_month": None,
-            "worst_month": None,
-        }
-
-        if len(seasonal_summary) > 0:
-            best_idx = seasonal_summary["mean_return"].idxmax()
-            worst_idx = seasonal_summary["mean_return"].idxmin()
-            results["best_month"] = seasonal_summary.loc[best_idx, "month_name"]
-            results["worst_month"] = seasonal_summary.loc[worst_idx, "month_name"]
-
-        if verbose:
-            print(f"  {len(eom_returns)} EOM trades analyzed")
-            if results["win_rate"]:
-                print(f"  Win rate: {results['win_rate']:.1f}%")
-
-        return results
 
     def run_lifecycle_analysis(
         self,
@@ -239,9 +167,6 @@ class Stage3Pipeline:
             print("=" * 60)
 
         results = {"symbol": symbol}
-
-        # EOM analysis
-        results["eom"] = self.run_eom_analysis(symbol, verbose=verbose)
 
         # Lifecycle analysis
         results["lifecycle"] = self.run_lifecycle_analysis(symbol, verbose=verbose)

@@ -10,9 +10,9 @@ from .strategies import (
     Strategy,
     Signal,
     DTEStrategy,
+    PreExpiryStrategy,
     LiquidityTriggerStrategy,
     HybridStrategy,
-    EOMStrategy,
     get_strategy,
 )
 from .performance import (
@@ -36,9 +36,9 @@ __all__ = [
     "Strategy",
     "Signal",
     "DTEStrategy",
+    "PreExpiryStrategy",
     "LiquidityTriggerStrategy",
     "HybridStrategy",
-    "EOMStrategy",
     "get_strategy",
     "PerformanceAnalyzer",
     "print_performance_report",

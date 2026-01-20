@@ -8,16 +8,8 @@ from typing import Optional, List
 import pandas as pd
 from datetime import datetime
 
-from .backtester import Backtester, run_backtest
+from .backtester import run_backtest
 from .execution import ExecutionConfig
-from .strategies import (
-    Strategy,
-    DTEStrategy,
-    LiquidityTriggerStrategy,
-    HybridStrategy,
-    EOMStrategy,
-    get_strategy,
-)
 from .performance import PerformanceAnalyzer, print_performance_report
 
 
@@ -50,6 +42,8 @@ class Stage4Pipeline:
         self,
         symbol: str,
         strategies: Optional[List[str]] = None,
+        data_frequency: str = "bucket",
+        daily_agg_config: Optional[dict] = None,
         verbose: bool = True,
     ) -> dict:
         """Run all backtests for a symbol.
@@ -65,7 +59,7 @@ class Stage4Pipeline:
         start_time = datetime.now()
 
         if strategies is None:
-            strategies = ["dte", "eom"]  # Default strategies
+            strategies = ["pre_expiry"]  # Default strategy
 
         if verbose:
             print(f"\nStage 4: Backtesting {symbol}")
@@ -89,6 +83,8 @@ class Stage4Pipeline:
                         "commission_per_contract": self.config.commission_per_contract,
                         "initial_capital": self.config.initial_capital,
                     },
+                    data_frequency=data_frequency,
+                    daily_agg_config=daily_agg_config,
                     stop_loss_usd=self.stop_loss_usd,
                     max_holding_bdays=self.max_holding_bdays,
                     allow_same_bucket_execution=self.allow_same_bucket_execution,
@@ -169,6 +165,151 @@ class Stage4Pipeline:
             summary_df = pd.DataFrame(summary_records)
             summary_df.to_parquet(output_dir / "summary.parquet", index=False)
 
+    def run_pre_expiry_sweep(
+        self,
+        symbol: str,
+        entry_dte_min: int = 2,
+        entry_dte_max: int = 10,
+        exit_dte_min: int = 0,
+        exit_dte_max: int = 3,
+        min_trades: int = 1,
+        data_frequency: str = "bucket",
+        daily_agg_config: Optional[dict] = None,
+        verbose: bool = True,
+    ) -> pd.DataFrame:
+        """Grid-search expiry-window parameters for the `pre_expiry` strategy.
+
+        The search space is restricted to "last few days" by default. We rank
+        combinations primarily by net P&L (after costs).
+
+        Args:
+            symbol: Commodity symbol
+            entry_dte_min: Minimum entry DTE (inclusive)
+            entry_dte_max: Maximum entry DTE (inclusive)
+            exit_dte_min: Minimum exit DTE (inclusive)
+            exit_dte_max: Maximum exit DTE (inclusive)
+            min_trades: Minimum number of trades required to keep a result row
+            verbose: Print progress and best parameters
+        """
+        entry_dte_min = int(entry_dte_min)
+        entry_dte_max = int(entry_dte_max)
+        exit_dte_min = int(exit_dte_min)
+        exit_dte_max = int(exit_dte_max)
+        min_trades = int(min_trades)
+
+        if entry_dte_min <= 0 or entry_dte_max <= 0:
+            raise ValueError("entry_dte_min/entry_dte_max must be >= 1")
+        if exit_dte_min < 0 or exit_dte_max < 0:
+            raise ValueError("exit_dte_min/exit_dte_max must be >= 0")
+        if entry_dte_min > entry_dte_max:
+            raise ValueError("entry_dte_min must be <= entry_dte_max")
+        if exit_dte_min > exit_dte_max:
+            raise ValueError("exit_dte_min must be <= exit_dte_max")
+
+        records: list[dict] = []
+
+        # Load data once (sweep can be 30-50 runs; avoid re-reading parquet each time).
+        from ..stage2.pipeline import read_spread_panel
+        from .aggregation import build_us_session_daily_vwap_panel
+        from .backtester import Backtester
+        from .execution import ExecutionEngine
+        from .performance import PerformanceAnalyzer
+        from .strategies import get_strategy
+
+        panel = read_spread_panel(self.data_dir, symbol)
+        freq = str(data_frequency or "bucket").lower()
+        if freq in {"bucket", "buckets"}:
+            pass
+        elif freq in {"daily_us_vwap", "us_session_daily_vwap"}:
+            panel = build_us_session_daily_vwap_panel(panel, **(daily_agg_config or {}))
+        else:
+            raise ValueError("data_frequency must be one of {'bucket','daily_us_vwap'}")
+
+        backtester = Backtester(panel, self.config)
+
+        for entry_dte in range(entry_dte_min, entry_dte_max + 1):
+            for exit_dte in range(exit_dte_min, exit_dte_max + 1):
+                if exit_dte >= entry_dte:
+                    continue
+
+                if verbose:
+                    print(f"  Testing pre_expiry(entry_dte={entry_dte}, exit_dte={exit_dte})...")
+
+                # Reset per-run state
+                backtester.engine = ExecutionEngine(backtester.config)
+                backtester.analyzer = PerformanceAnalyzer(backtester.config.initial_capital)
+
+                strat_params = {"entry_dte": entry_dte, "exit_dte": exit_dte}
+                if freq in {"daily_us_vwap", "us_session_daily_vwap"}:
+                    # Daily has a single observation per day; execute on the same daily mark
+                    # to keep DTE params interpretable (signal depends only on DTE).
+                    strat_params["execution"] = "same"
+                strategy = get_strategy("pre_expiry", **strat_params)
+
+                allow_same = bool(self.allow_same_bucket_execution) or (strat_params.get("execution") == "same")
+                result = backtester.run_strategy(
+                    strategy,
+                    spread_col="S1",
+                    stop_loss_usd=self.stop_loss_usd,
+                    max_holding_bdays=self.max_holding_bdays,
+                    auto_roll_on_contract_change=self.auto_roll_on_contract_change,
+                    allow_same_bucket_execution=allow_same,
+                )
+
+                report = result.get("report", {}) or {}
+                total_trades = int(report.get("total_trades", 0) or 0)
+                if total_trades < min_trades:
+                    continue
+
+                records.append(
+                    {
+                        "symbol": symbol,
+                        "strategy": "pre_expiry",
+                        "data_frequency": str(data_frequency),
+                        "daily_pair_policy": (daily_agg_config or {}).get("pair_policy") if str(data_frequency).lower() != "bucket" else None,
+                        "entry_dte": entry_dte,
+                        "exit_dte": exit_dte,
+                        "total_trades": total_trades,
+                        "win_rate": float(report.get("win_rate", 0) or 0),
+                        "total_pnl": float(report.get("total_pnl", 0) or 0),
+                        "total_costs": float(report.get("total_costs", 0) or 0),
+                        "sharpe_ratio": float(report.get("sharpe_ratio", 0) or 0),
+                        "max_drawdown_pct": float(report.get("max_drawdown_pct", 0) or 0),
+                        "profit_factor": float(report.get("profit_factor", 0) or 0),
+                    }
+                )
+
+        df = pd.DataFrame(records)
+        if df.empty:
+            return df
+
+        df = df.sort_values(["total_pnl", "sharpe_ratio"], ascending=[False, False]).reset_index(drop=True)
+
+        out_dir = self.data_dir / "trades" / symbol
+        out_dir.mkdir(parents=True, exist_ok=True)
+        freq = str(data_frequency or "bucket").lower()
+        if freq in {"bucket", "buckets"}:
+            suffix = "bucket"
+        elif freq in {"daily_us_vwap", "us_session_daily_vwap"}:
+            suffix = "daily_us_vwap"
+        else:
+            suffix = freq
+        pair_policy = (daily_agg_config or {}).get("pair_policy")
+        if suffix != "bucket" and pair_policy:
+            suffix = f"{suffix}_{pair_policy}"
+        df.to_parquet(out_dir / f"pre_expiry_sweep_{suffix}.parquet", index=False)
+
+        if verbose:
+            best = df.iloc[0]
+            print(
+                f"\nBest pre_expiry params: entry_dte={int(best['entry_dte'])}, "
+                f"exit_dte={int(best['exit_dte'])} | "
+                f"trades={int(best['total_trades'])} | "
+                f"net P&L=${float(best['total_pnl']):,.2f} | Sharpe={float(best['sharpe_ratio']):.2f}"
+            )
+
+        return df
+
     def run_cost_sensitivity(
         self,
         symbol: str,
@@ -227,7 +368,7 @@ class Stage4Pipeline:
     def run_stop_loss_sensitivity(
         self,
         symbol: str,
-        strategy_name: str = "eom",
+        strategy_name: str = "pre_expiry",
         stop_loss_values: Optional[List[Optional[float]]] = None,
         verbose: bool = True,
     ) -> pd.DataFrame:
@@ -301,6 +442,8 @@ def run_stage4(
     symbols: list[str],
     strategies: Optional[List[str]] = None,
     execution_config: Optional[dict] = None,
+    data_frequency: str = "bucket",
+    daily_agg_config: Optional[dict] = None,
 ) -> dict:
     """Run Stage 4 pipeline for specified symbols.
 
@@ -329,7 +472,12 @@ def run_stage4(
 
     results = {}
     for symbol in symbols:
-        result = pipeline.process_symbol(symbol, strategies=strategies)
+        result = pipeline.process_symbol(
+            symbol,
+            strategies=strategies,
+            data_frequency=data_frequency,
+            daily_agg_config=daily_agg_config,
+        )
         results[symbol] = result
 
     return results
