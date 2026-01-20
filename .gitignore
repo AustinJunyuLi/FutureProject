@@ -26,6 +26,23 @@ run_output_full/
 # Research outputs (local-only)
 research_outputs/
 
+# Generated outputs (local-only)
+/output/
+
+# Legacy output locations (keep ignored for safety)
+/analysis/
+/reports/expiry_seasonality/
+/reports/expiry_seasonality_minimal.zip
+
+# LaTeX build byproducts
+*.aux
+*.log
+*.toc
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
 # OS
 .DS_Store
 Thumbs.db

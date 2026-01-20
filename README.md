@@ -199,3 +199,34 @@ Buckets are defined in exchange time (CT):
 
 - `metadata/`: calendars and expiry tables (generated; not committed)
 - `data_parquet/`: bucket data, curve panel, spreads, roll events (generated; not committed)
+
+## Local analysis (gitignored outputs)
+
+These scripts write plots/tables under the repo-level `output/` folder (gitignored in this repo):
+
+```bash
+# Seasonality plots (DTE-anchored)
+python scripts/expiry_seasonality.py --symbol HG --start-year 2008 --end-year 2024
+
+# Window scan + heatmaps (S1, with S2 regimes)
+python scripts/dte_strategy_scan.py --symbol HG --start-year 2008 --end-year 2024
+
+# Regime-stratified event study (entry-day S2 regime; choose entry DTE)
+python scripts/dte_event_study.py --symbol HG --start-year 2008 --end-year 2024 --entry-dte 17
+
+# Walk-forward validation (expanding window by expiry year)
+python scripts/dte_walkforward.py --symbol HG --start-year 2008 --end-year 2024
+
+# Fixed-rule robustness (select baseline rule once, then stress execution)
+python scripts/dte_robustness.py --symbol HG --start-year 2008 --end-year 2024
+
+# Build the LaTeX report tables (reads from output/, writes to reports/)
+python scripts/build_pre_expiry_report_tables.py
+
+# Compile the report without leaving build byproducts in reports/
+mkdir -p output/.latex_build
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory output/.latex_build reports/pre_expiry_dte_report.tex
+pdflatex -interaction=nonstopmode -halt-on-error -output-directory output/.latex_build reports/pre_expiry_dte_report.tex
+cp output/.latex_build/pre_expiry_dte_report.pdf reports/pre_expiry_dte_report.pdf
+rm -rf output/.latex_build
+```

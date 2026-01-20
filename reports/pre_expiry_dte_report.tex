@@ -1,0 +1,84 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usepackage{hyperref}
+
+\title{HG Pre-Expiry (DTE) Analysis \\ 2008--2024}
+\author{Futures Curve Pipeline (Stages 0--2)}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section*{What this report contains (analytics only)}
+This document summarizes the \textbf{analytic outcomes} of a DTE-anchored (business-day) pre-expiry study for HG calendar spreads, based on daily US-session VWAP series derived from the Stage 2 spread panel. Reproducibility commands and technical implementation details live in \texttt{README.md}.
+
+\section*{Key findings (headline)}
+\begin{itemize}
+  \item The strongest in-sample family (2008--2024) in a constrained DTE window search is typically \textbf{short S1} with an \textbf{entry-day S2 regime filter} (``S2$\ge$0 at entry'').
+  \item A representative fixed rule selected on 2008--2024 is: \textbf{Short S1, enter at DTE=20, exit at DTE=0, only if S2(entry)$\ge$0}, with round-trip costs included (1 tick/leg/side).
+  \item The fixed-rule robustness check shows that this rule is \textbf{sensitive to execution timing}: using \textbf{shift=1} (next-business-day execution) flips performance negative in the pooled sample.
+\end{itemize}
+
+\section*{Definitions and conventions (minimal)}
+\textbf{Spreads.} S1 = F2 -- F1, S2 = F3 -- F2.
+
+\textbf{DTE.} The x-axis is \textbf{business days to expiry} (DTE), aligned to the near leg of the spread.
+
+\textbf{Daily series.} Baseline price proxy is \textbf{US-session VWAP} (buckets 1--7) with \textbf{shift=0} (same-day execution convention).
+
+\textbf{Costs.} All net metrics include a round-trip cost model of \textbf{1 tick per leg per side} (2 legs, entry+exit).
+
+\section*{DTE-anchored seasonality (S1)}
+The seasonality view aligns each contract cycle by DTE and summarizes the cross-cycle distribution (mean + IQR).
+
+\subsection*{Overall average (2008--2024)}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{output/expiry_seasonality/s1_level_2008_2024_us_vwap_shift0_overall_average.png}
+\end{center}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{output/expiry_seasonality/s1_diff_2008_2024_us_vwap_shift0_overall_average.png}
+\end{center}
+
+\subsection*{Why this matters for strategy search}
+The overall DTE-anchored curves guide which DTE subwindows might plausibly contain a consistent drift and help motivate a constrained grid search over entry/exit windows.
+
+\section*{Regime-stratified event study (entry-day S2 regime)}
+We split contract cycles into regimes using the \textbf{entry-day} S2 sign at a chosen entry DTE (here, DTE=20). The plots show the mean path and dispersion conditional on that entry regime.
+
+\subsection*{Cumulative drift: $S1 - S1@\mathrm{DTE}=20$}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{output/event_study/s1_us_vwap_shift0__s2_us_vwap_shift0__entry20/cumulative_s1/cumulative_s1_from_dte20_s2_pos.png}
+\end{center}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{output/event_study/s1_us_vwap_shift0__s2_us_vwap_shift0__entry20/cumulative_s1/cumulative_s1_from_dte20_s2_neg.png}
+\end{center}
+
+\subsection*{Daily drift: $\Delta S1$ by DTE}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{output/event_study/s1_us_vwap_shift0__s2_us_vwap_shift0__entry20/dte_drift_ds1/dte_drift_ds1_s2_pos.png}
+\end{center}
+
+\section*{Window scan (costed; constrained search)}
+We scan DTE windows with entry DTE in [20..5] and exit DTE in [4..0], for both long and short S1. Metrics are computed per contract cycle; net P\&L subtracts the round-trip spread cost.
+
+\subsection*{Heatmaps (S2$\ge$0 regime; short S1)}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{output/strategy_scan/heatmap_s2_pos_short_net_mean.png}
+\end{center}
+\begin{center}
+\includegraphics[width=0.95\textwidth]{output/strategy_scan/heatmap_s2_pos_short_net_t.png}
+\end{center}
+
+\section*{Validation (walk-forward, out-of-sample)}
+We run an expanding-window walk-forward procedure by expiry year (train on cycles with expiry year $<Y$, test on cycles with expiry year $=Y$). Selection is constrained with minimum trade counts and a positive net mean requirement, and evaluated out-of-sample per year.
+
+\section*{Robustness (fixed rule; execution/cost stress)}
+We take a single baseline rule (selected in-sample) and re-evaluate it under alternative execution assumptions (shift=1, bucket1 proxy, doubled cost). This isolates sensitivity to execution timing and cost assumptions without re-optimizing parameters.
+
+\clearpage
+\input{reports/pre_expiry_dte_report_tables.tex}
+
+\end{document}
