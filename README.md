@@ -1,11 +1,10 @@
 # Futures Curve Pipeline
 
-Deterministic expiry-ranked futures curve (F1..F12) construction, spread analytics (S1..S11), roll-timing metrics, and execution-aware backtests for CME/COMEX-style contracts.
+Deterministic expiry-ranked futures curve (F1..F12) construction, spread calculation (S1..S11), and roll-timing metrics for CME/COMEX-style contracts.
 
 ## What’s in this repo
 
-- Full source code for the pipeline (Stages 0–4), tests, and CLI.
-- A tracked analysis report: `research_outputs/report/HG_Analysis_Results_Report.pdf`.
+- Full source code for the pipeline (Stages 0–2), tests, and CLI.
 - Raw data and large generated outputs are **not** committed to Git (see Data Setup).
 
 ## Key conventions (CME/COMEX)
@@ -98,7 +97,7 @@ python -m futures_curve.cli stage1 --symbol HG --input /path/to/organized_data -
 
 ## Usage (end‑to‑end)
 
-Run the full pipeline (Stages 0–4) for HG using the default config:
+Run the full pipeline (Stages 0–2) for HG using the default config:
 
 ```bash
 python -m futures_curve.cli run --config config/default.yaml
@@ -116,15 +115,6 @@ Or run stages explicitly:
 python -m futures_curve.cli stage0 --symbol HG --output metadata
 python -m futures_curve.cli stage1 --symbol HG --input /path/to/organized_data --output data_parquet
 python -m futures_curve.cli stage2 --symbol HG --data data_parquet
-python -m futures_curve.cli stage3 --symbol HG --data data_parquet
-python -m futures_curve.cli stage4 --symbol HG --data data_parquet --strategies pre_expiry
-python -m futures_curve.cli pre-expiry-sweep --symbol HG --data data_parquet
-```
-
-Build reports:
-
-```bash
-python -m futures_curve.cli report --symbol HG --data data_parquet --out research_outputs --report-type both
 ```
 
 The CLI entrypoint also works once installed:
@@ -146,15 +136,12 @@ Key fields:
 - `ingestion.*`: chunk size, timezone inference settings, trade date cutoff
 - `curve.*`: max contracts, min DTE threshold
 - `roll.*`: roll thresholds, smoothing, persistence
-- `backtest.*`: slippage, commissions, tick size/value, capital, risk controls
 
 ## Pipeline stage overview
 
 - **Stage 0**: expiry schedule + contract specs + trading calendar
 - **Stage 1**: parse raw 1-minute data; aggregate to hourly buckets and daily bars
 - **Stage 2**: deterministic curve panel (F1..F12), roll share/events, spreads
-- **Stage 3**: analytics (DTE profiles, roll event studies, diagnostics)
-- **Stage 4**: backtests (pre-expiry window + liquidity-trigger variants)
 
 ## Technical implementation details (from the technical report)
 
@@ -202,16 +189,6 @@ Buckets are defined in exchange time (CT):
 - **Smoothing:** causal rolling mean over last K observations.
 - Roll events are stored at both bucket and daily frequency; daily uses the last US‑session bucket for that trade date.
 
-### Stage 3 analytics
-
-- Roll event study anchors on `roll_peak_trade_date` (fallback to `roll_start_trade_date` if missing).
-
-### Backtests (Stage 4)
-
-- Execution is **next‑bucket** by default (no same‑bucket fills).
-- Costs: slippage in ticks, commission per contract, tick size/value.
-- Optional risk controls: stop loss, max holding days, contract‑change roll rules.
-
 ## Validation / sanity checks
 
 - `pytest -q` should pass after install.
@@ -221,10 +198,4 @@ Buckets are defined in exchange time (CT):
 ## Outputs
 
 - `metadata/`: calendars and expiry tables (generated; not committed)
-- `data_parquet/`: bucket data, curve panel, spreads, roll events, trades/backtests (generated; not committed)
-- `research_outputs/`: figures, tables, and reports (generated; only one PDF tracked)
-- Tracked report: `research_outputs/report/HG_Analysis_Results_Report.pdf`
-
-## Notes
-
-- Plotting can trip OpenMP/MKL shared‑memory issues on some systems; the pipeline sets `MKL_THREADING_LAYER=SEQUENTIAL` defensively in plotting/reporting code. If you still see MKL/OpenMP errors, try exporting it in your shell before running.
+- `data_parquet/`: bucket data, curve panel, spreads, roll events (generated; not committed)

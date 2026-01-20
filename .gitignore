@@ -23,11 +23,8 @@ metadata/
 run_output/
 run_output_full/
 
-# Research outputs (keep only analysis PDF)
-research_outputs/*
-!research_outputs/report/
-research_outputs/report/*
-!research_outputs/report/HG_Analysis_Results_Report.pdf
+# Research outputs (local-only)
+research_outputs/
 
 # OS
 .DS_Store

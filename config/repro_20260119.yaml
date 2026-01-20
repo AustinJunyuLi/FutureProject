@@ -1,6 +1,6 @@
 # Reproducible run config (HG) against the local Dropbox data layout.
 # Runs "from first principles" end-to-end, writing to the canonical output
-# directories (data_parquet/, metadata/, research_outputs/).
+# directories (data_parquet/, metadata/).
 
 paths:
   # Raw data lives in the sibling repo (not tracked in git).
@@ -8,7 +8,6 @@ paths:
   # Use canonical output directories (keeps the workspace tidy).
   output_parquet: "data_parquet"
   metadata: "metadata"
-  research_outputs: "research_outputs"
 
 commodities:
   - HG
@@ -33,15 +32,6 @@ roll:
   smoothing_window_bucket: 3
   smoothing_window_daily: 1
   min_total_volume: 1.0
-
-backtest:
-  slippage_ticks: 1
-  commission_per_contract: 2.50
-  tick_size: 0.0005
-  tick_value: 12.50
-  initial_capital: 100000
-  # Archive analysis report is gross of stop-loss logic; disable here for consistency.
-  stop_loss_usd: null
 
 buckets:
   0: {start: "16:00", end: "16:59", desc: "Maintenance hour (QC only)"}

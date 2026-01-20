@@ -5,7 +5,6 @@ paths:
   raw_data: "/home/austinli/futures_data/organized_data"
   output_parquet: "data_parquet"
   metadata: "metadata"
-  research_outputs: "research_outputs"
 
 # Commodities to process
 commodities:
@@ -35,15 +34,6 @@ roll:
   smoothing_window_bucket: 3
   smoothing_window_daily: 1
   min_total_volume: 1.0
-
-# Stage 4: Backtest parameters
-backtest:
-  slippage_ticks: 1  # ticks per fill per leg (2 legs per side)
-  commission_per_contract: 2.50  # per contract per side
-  tick_size: 0.0005
-  tick_value: 12.50
-  initial_capital: 100000
-  stop_loss_usd: 100  # optional; set null to disable
 
 # Bucket definitions (US/Central time)
 buckets:
