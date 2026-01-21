@@ -26,6 +26,19 @@ run_output_full/
 # Research outputs (local-only)
 research_outputs/
 
+# Local analysis outputs (local-only)
+output/
+analysis/
+
+# LaTeX build byproducts
+*.aux
+*.log
+*.toc
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
 # OS
 .DS_Store
 Thumbs.db
