@@ -39,6 +39,7 @@ class FoldResult:
 @dataclass(frozen=True)
 class WalkForwardOutput:
     folds: list[FoldResult]
+    oos_pnl: pd.Series
     oos_returns: pd.Series
     oos_equity: pd.Series
     oos_sharpe: float
@@ -371,6 +372,7 @@ def walk_forward_carry(
 
     return WalkForwardOutput(
         folds=folds,
+        oos_pnl=pnl_all,
         oos_returns=oos_returns,
         oos_equity=oos_equity,
         oos_sharpe=oos_sharpe,
@@ -547,6 +549,7 @@ def walk_forward_mean_reversion(
 
     return WalkForwardOutput(
         folds=folds,
+        oos_pnl=pnl_all,
         oos_returns=oos_returns,
         oos_equity=oos_equity,
         oos_sharpe=oos_sharpe,

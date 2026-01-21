@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from datetime import date
 
 import pandas as pd
 
@@ -22,6 +23,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--max-dd", type=float, default=0.15)
     p.add_argument("--vol-target", type=float, default=0.10)
     p.add_argument("--capital", type=float, default=1_000_000.0)
+    p.add_argument("--min-train-nonzero-days", type=int, default=252)
+    p.add_argument("--min-test-nonzero-days", type=int, default=20)
 
     # Roll / liquidity filter (applied on signal day)
     p.add_argument(
@@ -88,6 +91,8 @@ def main() -> None:
         vol_target_annual=args.vol_target,
         initial_capital=args.capital,
         spreads=(1, 2, 3, 4),
+        min_train_nonzero_days=args.min_train_nonzero_days,
+        min_test_nonzero_days=args.min_test_nonzero_days,
     )
 
     spreads_path = Path("data_parquet") / "spreads" / args.symbol / "spreads_panel.parquet"
@@ -133,6 +138,7 @@ def main() -> None:
     carry_fold_rows: list[dict[str, object]] = []
     mr_fold_rows: list[dict[str, object]] = []
     summary_rows: list[dict[str, object]] = []
+    carry_by_spread: dict[str, object] = {}
 
     for s in cfg.spreads:
         series = build_daily_spread_series(config=cfg, spreads_panel=panel, spread_num=s)
@@ -150,6 +156,7 @@ def main() -> None:
             scales=carry_scales,
         )
         carry_fold_rows.extend([r.__dict__ for r in carry_out.folds])
+        carry_by_spread[series.spread] = carry_out
         summary_rows.append(
             {
                 "strategy": "carry",
@@ -200,6 +207,63 @@ def main() -> None:
         print("\nMean reversion folds (head):")
         print(mr_df.head(20).to_string(index=False))
 
+    # Best-of carry portfolio: select the best spread each year by TRAIN Sharpe only.
+    best_rows: list[dict[str, object]] = []
+    pnl_pieces: list[pd.Series] = []
+    for year in range(args.first_test_year, args.last_test_year + 1):
+        best_choice = None
+        best_train = None
+        for spread, out in carry_by_spread.items():
+            folds = [f for f in out.folds if f.fold_year == year]
+            if not folds:
+                continue
+            # One fold per year per spread by construction
+            f = folds[0]
+            if best_train is None or (pd.notna(f.train_sharpe) and f.train_sharpe > best_train):
+                best_train = f.train_sharpe
+                best_choice = (spread, out, f)
+
+        if best_choice is None:
+            continue
+
+        spread, out, f = best_choice
+        year_start = pd.Timestamp(date(year, 1, 1))
+        year_end = pd.Timestamp(date(year, 12, 31))
+        pnl_year = out.oos_pnl.loc[(out.oos_pnl.index >= year_start) & (out.oos_pnl.index <= year_end)]
+        if pnl_year.empty:
+            continue
+        pnl_pieces.append(pnl_year)
+        best_rows.append(
+            {
+                "fold_year": year,
+                "selected_spread": spread,
+                "train_sharpe": f.train_sharpe,
+                "train_max_dd": f.train_max_dd,
+                "train_nonzero_days": f.train_nonzero_days,
+                "test_sharpe": f.test_sharpe,
+                "test_max_dd": f.test_max_dd,
+                "test_nonzero_days": f.test_nonzero_days,
+                "params": f.params,
+                "filters": f.filters,
+            }
+        )
+
+    if best_rows and pnl_pieces:
+        best_df = pd.DataFrame(best_rows).sort_values(["fold_year"])
+        best_df.to_csv(out_dir / "walk_forward_best_of_carry.csv", index=False)
+        pnl_all = pd.concat(pnl_pieces).sort_index()
+        # Convert to returns/equity for reporting.
+        equity = pnl_all.cumsum().add(cfg.initial_capital)
+        rets = (pnl_all / equity.shift(1).replace(0.0, pd.NA)).fillna(0.0)
+        sharpe = float((rets.mean() / rets.std(ddof=0)) * (cfg.trading_days_per_year ** 0.5)) if rets.std(ddof=0) != 0 else float("nan")
+        dd = (equity.cummax() - equity) / equity.cummax()
+        max_dd = float(dd.fillna(0.0).max())
+        print("\nBest-of carry (selected spread per year):")
+        print(best_df.to_string(index=False))
+        print(f"\nBest-of carry stitched OOS: sharpe={sharpe:.3f}, maxDD={max_dd:.3f}, years={best_df['fold_year'].min()}–{best_df['fold_year'].max()}, nonzero_days={(pnl_all!=0).sum()}")
+    else:
+        print("\nBest-of carry: no years produced eligible folds.")
+
     summary_df = pd.DataFrame(summary_rows).sort_values(["strategy", "spread"])
     summary_df.to_csv(out_dir / "walk_forward_summary.csv", index=False)
     print("\nOOS stitched summary:")
@@ -208,4 +272,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
