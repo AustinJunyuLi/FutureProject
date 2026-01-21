@@ -1,0 +1,460 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\graphicspath{{../output/report/hg_spread_strategy_search/figures/}{output/report/hg_spread_strategy_search/figures/}}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\title{HG Spread Strategy Search: Carry and Mean Reversion\\Walk-Forward Out-of-Sample Analysis}
+\author{Austin Li}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+%------------------------------------------------------------------------------
+\section{Introduction}
+%------------------------------------------------------------------------------
+
+This report presents a systematic evaluation of two strategy families---carry (roll-down) and DTE-conditioned mean reversion---applied to COMEX High Grade Copper (HG) adjacent calendar spreads. The analysis uses an expiry-ranked curve construction framework (Stage 0--2) with a simple, causal execution convention, and evaluates performance through an expanding-window walk-forward procedure.
+
+\subsection{Motivation}
+
+Calendar spreads in commodity futures markets capture storage, financing, and delivery-related dynamics in a single price difference. For base metals like HG, the term structure is shaped by inventory conditions, financing costs, and roll activity from passive market participants (e.g., ETFs, index funds). Two natural strategy hypotheses emerge:
+
+\begin{enumerate}
+    \item \textbf{Carry (roll-down)}: If the spread level predicts near-term returns, a strategy that goes long (short) spreads with positive (negative) carry should capture predictable roll-down.
+    \item \textbf{DTE-conditioned mean reversion}: If spread levels exhibit mean-reverting behavior that varies by days-to-expiry (DTE), conditioning on DTE allows the strategy to exploit deviations from DTE-specific fair value.
+\end{enumerate}
+
+Any systematic effect must survive realistic transaction costs, execution timing, and out-of-sample validation to be practically relevant.
+
+\subsection{Research Questions}
+
+This analysis addresses three primary research questions:
+
+\begin{enumerate}
+    \item \textbf{Strategy existence}: Do carry or mean reversion signals generate positive after-cost returns on HG adjacent spreads?
+    \item \textbf{Spread selection}: Which of the adjacent spreads (S1--S4) is most suitable for each strategy family?
+    \item \textbf{Out-of-sample robustness}: Can any identified strategy survive walk-forward validation under realistic assumptions?
+\end{enumerate}
+
+\subsection{Contribution and Approach}
+
+The analysis proceeds through five stages:
+\begin{enumerate}
+    \item \textbf{Curve construction}: Define adjacent spreads from the expiry-ranked strip
+    \item \textbf{Signal and execution}: Establish causal signal/execution timing conventions
+    \item \textbf{Strategy families}: Define carry and mean reversion signal generation
+    \item \textbf{Walk-forward validation}: Test out-of-sample using expanding windows with annual folds
+    \item \textbf{Robustness}: Evaluate sensitivity to roll filters and execution assumptions
+\end{enumerate}
+
+\subsection{Preview of Results}
+
+The analysis reveals that:
+\begin{itemize}
+    \item The carry family produces the most stable out-of-sample results, particularly on S1 and S2, with Sharpe ratios in the range of 0.2--0.5 under the no-roll-filter case.
+    \item Mean reversion strategies are generally unstable net-of-costs, with negative or near-zero out-of-sample Sharpe ratios across most spreads.
+    \item Roll filtering (excluding roll windows) reduces opportunity without uniformly improving out-of-sample performance.
+    \item A ``best-of'' carry approach (selecting the spread with highest training Sharpe each year) achieves a stitched OOS Sharpe of approximately 0.15--0.23, but this meta-selection introduces additional data-mining concerns.
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Data and Methodology}
+%------------------------------------------------------------------------------
+
+\subsection{Instruments and Curve Construction}
+
+Adjacent calendar spreads are constructed from the deterministic expiry-ranked strip. For each observation date, contracts are ranked by expiration, and spreads are defined as:
+\begin{align}
+    S1 &= F_2 - F_1 \quad \text{(front spread)} \\
+    S2 &= F_3 - F_2 \quad \text{(second spread)} \\
+    S3 &= F_4 - F_3 \quad \text{(third spread)} \\
+    S4 &= F_5 - F_4 \quad \text{(fourth spread)}
+\end{align}
+
+The sample spans 2008--2024 (monthly expiries), encompassing approximately 17 years of data.
+
+\subsection{Signal and Execution Timing}
+
+The analysis uses an intraday-causal timing model to avoid look-ahead bias:
+
+\textbf{Signal price (trade date $t$).} US-session VWAP proxy computed from bucket closes over buckets 1--7 (volume-weighted). This price is used to generate the trading signal.
+
+\textbf{Execution price (trade date $t+1$).} Earliest available US-session bucket in buckets 1--7 where both legs print (bucket 1 preferred, otherwise fallback to buckets 2--7). This introduces a one-day lag between signal observation and execution.
+
+This timing convention ensures that the signal is observable before the execution price is determined, reflecting a realistic ``signal today, trade tomorrow'' workflow.
+
+\subsection{Execution Bucket Coverage}
+
+Figure~\ref{fig:exec_buckets} shows the distribution of the execution bucket selected by the ``earliest available US bucket'' rule across spreads.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{execution_bucket_distribution.png}
+\caption{Execution bucket distribution (earliest available US bucket in 1--7 with prints on both legs), by spread. Most executions occur in bucket 1, with decreasing frequency in later buckets.}
+\label{fig:exec_buckets}
+\end{figure}
+
+The distribution confirms that execution is concentrated in the earliest buckets for most spreads, with occasional fallback to later buckets when early prints are unavailable.
+
+\subsection{Transaction Cost Model}
+
+All ``net'' metrics incorporate round-trip transaction costs:
+\begin{itemize}
+    \item \textbf{Baseline}: 1 tick per leg per side
+    \item \textbf{Cost calculation}: 2 legs $\times$ 2 sides (enter and exit) = 4 ticks per round trip
+    \item \textbf{HG tick value}: \$0.0005/lb $\times$ 25,000 lb = \$12.50 per tick
+    \item \textbf{Total round-trip cost}: \$50 per contract (4 $\times$ \$12.50)
+\end{itemize}
+
+This cost model reflects a reasonable estimate for retail-sized positions but may understate costs for larger positions or periods of low liquidity.\footnote{See \url{https://www.cmegroup.com/markets/metals/base/copper.contractSpecs.html} for contract specifications.}
+
+\subsection{Risk Targeting and Constraints}
+
+Positions are scaled to ensure comparable risk across strategies and spreads:
+\begin{itemize}
+    \item \textbf{Volatility target}: 10\% annualized (based on EWMA volatility of 1-contract daily P\&L)
+    \item \textbf{Maximum drawdown gate}: 15\% (training period gate; candidates exceeding this are rejected)
+\end{itemize}
+
+These constraints ensure that all strategies are evaluated on a risk-adjusted basis and that extreme drawdowns in training data do not propagate to out-of-sample evaluation.
+
+%------------------------------------------------------------------------------
+\section{Strategy Families}
+%------------------------------------------------------------------------------
+
+\subsection{Carry (Roll-Down) Strategy}
+
+The carry strategy exploits the predictability of roll-down returns implied by the term structure slope.
+
+\subsubsection{Signal Definition}
+
+For each spread $S_i$, the carry signal is derived from a DTE-implied annualized carry proxy:
+\begin{equation}
+    \text{Carry}_{S_i} = \frac{S_i}{\text{DTE}_{\text{near}}} \times 252
+\end{equation}
+where DTE$_{\text{near}}$ is the number of business days to expiry of the near leg.
+
+The strategy takes a directional position based on the sign and magnitude of the carry signal, with a threshold parameter controlling trade entry.
+
+\subsubsection{Trade Rules}
+
+\begin{itemize}
+    \item \textbf{Direction}: Long when carry is positive (spread expected to decline as front contract rolls down), short when carry is negative
+    \item \textbf{Entry threshold}: Minimum carry magnitude required to initiate a position (e.g., 5\% annualized)
+    \item \textbf{Regime filters}: Optional conditioning on term structure shape (contango vs.\ backwardation) and volatility regime (low vs.\ high)
+\end{itemize}
+
+\subsubsection{Economic Interpretation}
+
+Positive carry on a spread indicates that the front leg is trading at a premium relative to the back leg, normalized by time. As the front contract approaches expiry, convergence mechanics and roll pressure from long-only passive investors should cause the spread to decline, generating positive returns for a long position initiated when carry is positive.
+
+\subsection{DTE-Conditioned Mean Reversion Strategy}
+
+The mean reversion strategy exploits temporary deviations of spread levels from their DTE-specific norms.
+
+\subsubsection{Signal Definition}
+
+For each spread, we compute a z-score relative to the DTE-conditioned distribution:
+\begin{equation}
+    z_t = \frac{S_t - \text{median}_{d(t)}(S)}{\text{MAD}_{d(t)}(S)}
+\end{equation}
+where $d(t)$ is the DTE bin (e.g., 0--5, 5--10, ...) and the median and MAD (median absolute deviation) are computed over a rolling lookback window.
+
+\subsubsection{Trade Rules}
+
+\begin{itemize}
+    \item \textbf{Entry}: Enter when $|z_t|$ exceeds an entry threshold (e.g., 1.5)
+    \item \textbf{Exit}: Exit when $|z_t|$ falls below an exit threshold (e.g., 0.2) or a maximum holding period is reached
+    \item \textbf{Direction}: Long when $z_t < 0$ (spread below DTE-normal), short when $z_t > 0$
+    \item \textbf{Parameters}: DTE bin size, lookback days, entry z-threshold, exit z-threshold, max holding days
+\end{itemize}
+
+\subsubsection{Economic Interpretation}
+
+DTE-specific fair values arise because spread dynamics are fundamentally tied to the expiry cycle: roll pressure, liquidity migration, and convergence mechanics all vary systematically with DTE. A mean reversion strategy exploits the hypothesis that extreme deviations from DTE-normal levels are temporary and will correct.
+
+%------------------------------------------------------------------------------
+\section{Walk-Forward Evaluation Design}
+%------------------------------------------------------------------------------
+
+\subsection{Methodology}
+
+The analysis uses an expanding-window walk-forward procedure with annual test folds:
+
+\begin{enumerate}
+    \item For each test year $Y$, train on all data through $Y-1$
+    \item Require minimum training exposure (non-zero-position days) to avoid no-trade artifacts
+    \item Select the best parameter set by training-period Sharpe ratio (with net mean $> 0$ enforced)
+    \item Apply the selected rule to the calendar year $Y$ (out-of-sample)
+    \item Stitch OOS results across all test years to compute aggregate performance metrics
+\end{enumerate}
+
+\subsection{Training Gates and Constraints}
+
+To ensure meaningful training signals and avoid overfitting to sparse data:
+\begin{itemize}
+    \item \textbf{Minimum exposure}: Require a minimum number of non-zero-position days in training
+    \item \textbf{Maximum drawdown}: Reject candidates with training drawdown exceeding 15\%
+    \item \textbf{Positive net mean}: Only candidates with positive training net mean are eligible for selection
+\end{itemize}
+
+\subsection{Test Fold Coverage}
+
+Due to the minimum training requirements, the first eligible test year varies by strategy and spread. The earliest test years are typically 2013--2015, with later start dates for strategies requiring more training data.
+
+%------------------------------------------------------------------------------
+\section{Results: Roll Filter = None}
+%------------------------------------------------------------------------------
+
+This section presents results under the baseline configuration (no roll filter applied).
+
+\subsection{Stitched Out-of-Sample Summary}
+
+Table~\ref{tab:oos_none} summarizes the stitched out-of-sample performance for each strategy-spread combination.
+
+\input{../output/report/hg_spread_strategy_search/tables/oos_summary_none.tex}
+\label{tab:oos_none}
+
+\subsubsection{Interpretation}
+
+\textbf{Carry family}:
+\begin{itemize}
+    \item S1 achieves the highest Sharpe ratio (0.455) over 7 test years (2018--2024), with a controlled maximum drawdown of 3.4\%.
+    \item S3 shows a higher Sharpe (0.541) but over only 3 years (2021--2024), making the estimate less reliable.
+    \item S2 spans the longest test period (2013--2024, 9 years) with a modest Sharpe of 0.186.
+    \item S4 has no eligible test folds, indicating insufficient training-period performance.
+\end{itemize}
+
+\textbf{Mean reversion family}:
+\begin{itemize}
+    \item All spreads except S1 show negative out-of-sample Sharpe ratios.
+    \item S1 achieves a near-zero Sharpe (0.068) with a high maximum drawdown (18.3\%).
+    \item Maximum drawdowns are substantially higher than the carry family (13--23\% vs.\ 2--3\%).
+    \item The mean reversion family appears unsuitable for HG spreads under the current parameterization.
+\end{itemize}
+
+\subsection{Carry Strategy: Out-of-Sample Equity Curves}
+
+Figure~\ref{fig:carry_eq_none} shows the stitched out-of-sample equity curves for the carry family across all spreads.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{oos_equity_carry_none.png}
+\caption{Carry family: stitched out-of-sample equity curves by spread (roll filter = none). S1 and S3 show the most consistent positive drift; S2 is positive but flatter.}
+\label{fig:carry_eq_none}
+\end{figure}
+
+\subsubsection{Observation}
+
+S1 exhibits steady growth with limited drawdowns during the test period. S3 shows strong recent performance but lacks the sample depth of S1 and S2. S2 provides the longest track record but with more modest returns.
+
+\subsection{Mean Reversion Strategy: Out-of-Sample Equity Curves}
+
+Figure~\ref{fig:mr_eq_none} shows the stitched out-of-sample equity curves for the mean reversion family.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{oos_equity_mean_reversion_none.png}
+\caption{Mean reversion family: stitched out-of-sample equity curves by spread (roll filter = none). All spreads exhibit choppy behavior with limited or negative drift.}
+\label{fig:mr_eq_none}
+\end{figure}
+
+\subsubsection{Observation}
+
+Mean reversion strategies show highly volatile equity curves with extended drawdown periods. The lack of consistent positive drift and the presence of large drawdowns suggest that DTE-conditioned mean reversion does not capture a robust edge in HG spreads under the current framework.
+
+\subsection{Best-of Carry: Meta-Selection Approach}
+
+To evaluate whether dynamic spread selection can improve performance, we implement a ``best-of'' carry approach: for each test year, select the spread with the highest training Sharpe ratio.
+
+\input{../output/report/hg_spread_strategy_search/tables/best_of_carry_none.tex}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{oos_equity_best_of_carry_none.png}
+\caption{Best-of carry: stitched OOS equity (selecting the spread with highest \emph{training} Sharpe each year; roll filter = none).}
+\label{fig:best_carry_none}
+\end{figure}
+
+\subsubsection{Interpretation}
+
+The best-of approach achieves a stitched OOS Sharpe of 0.152 with maximum drawdown of 4.6\%. However:
+\begin{itemize}
+    \item Test Sharpe is often negative despite positive training Sharpe (e.g., 2018, 2019, 2020, 2023)
+    \item The meta-selection does not consistently outperform a fixed-spread approach
+    \item This suggests that training-period Sharpe is a noisy predictor of out-of-sample performance
+\end{itemize}
+
+%------------------------------------------------------------------------------
+\section{Results: Roll Filter = Exclude Roll Window}
+%------------------------------------------------------------------------------
+
+This section presents results with the roll filter activated (excluding observations during roll windows).
+
+\subsection{Motivation for Roll Filtering}
+
+Roll windows around contract expiries are characterized by:
+\begin{itemize}
+    \item Elevated spread volatility due to liquidity migration
+    \item Abnormal trading activity from passive roll demand
+    \item Potential for spurious signals from temporary mispricings
+\end{itemize}
+
+Filtering out roll windows may improve signal quality but reduces the number of tradable days.
+
+\subsection{Stitched Out-of-Sample Summary}
+
+\input{../output/report/hg_spread_strategy_search/tables/oos_summary_exclude_roll.tex}
+
+\subsubsection{Comparison with No-Filter Results}
+
+\textbf{Carry family}:
+\begin{itemize}
+    \item S1 performance deteriorates sharply (Sharpe drops from 0.455 to $-0.452$)
+    \item S2 improves modestly (Sharpe from 0.186 to 0.233)
+    \item S3 and S4 show negative Sharpe ratios
+    \item Overall, roll filtering helps S2 but hurts other spreads
+\end{itemize}
+
+\textbf{Mean reversion family}:
+\begin{itemize}
+    \item S3 turns slightly positive (0.105)
+    \item All other spreads remain negative
+    \item Roll filtering does not rescue the mean reversion family
+\end{itemize}
+
+\subsection{Carry Strategy: Out-of-Sample Equity Curves}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{oos_equity_carry_exclude_roll.png}
+\caption{Carry family: stitched out-of-sample equity curves by spread (roll filter = exclude\_roll). S2 shows the most stable performance under roll filtering.}
+\end{figure}
+
+\subsection{Mean Reversion Strategy: Out-of-Sample Equity Curves}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{oos_equity_mean_reversion_exclude_roll.png}
+\caption{Mean reversion family: stitched out-of-sample equity curves by spread (roll filter = exclude\_roll). Performance remains poor across spreads.}
+\end{figure}
+
+\subsection{Best-of Carry: Meta-Selection Approach}
+
+\input{../output/report/hg_spread_strategy_search/tables/best_of_carry_exclude_roll.tex}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{oos_equity_best_of_carry_exclude_roll.png}
+\caption{Best-of carry: stitched OOS equity (roll filter = exclude\_roll).}
+\end{figure}
+
+\subsubsection{Interpretation}
+
+Under roll filtering, the best-of carry approach achieves a higher Sharpe (0.233 vs.\ 0.152) and lower drawdown (2.4\% vs.\ 4.6\%). The selection concentrates on S2, which benefits from roll exclusion. However, the number of test years is reduced (6 vs.\ 10), making the comparison less reliable.
+
+%------------------------------------------------------------------------------
+\section{Discussion}
+%------------------------------------------------------------------------------
+
+\subsection{Summary of Evidence}
+
+The analysis provides evidence for a modest carry effect in HG adjacent spreads, with the following caveats:
+
+\begin{itemize}
+    \item \textbf{Carry works, marginally}: S1 and S2 carry strategies achieve positive out-of-sample Sharpe ratios in the range of 0.2--0.5 under no-roll-filter conditions.
+    \item \textbf{Mean reversion fails}: DTE-conditioned mean reversion is uniformly unstable net-of-costs, with high drawdowns and negative or near-zero out-of-sample Sharpe ratios.
+    \item \textbf{Roll filtering is not uniformly helpful}: Excluding roll windows helps S2 carry but hurts S1 carry; it does not rescue mean reversion.
+    \item \textbf{Meta-selection has limited value}: Best-of approaches offer modest improvement but do not overcome the fundamental noise in strategy selection.
+\end{itemize}
+
+\subsection{Limitations}
+
+Several limitations temper these conclusions:
+
+\subsubsection{Execution Timing}
+
+The $t+1$ execution assumption may understate slippage in practice. Strategies that require precise DTE-aligned execution face adverse selection if execution cannot occur at the assumed price.
+
+\subsubsection{Sample Size}
+
+With annual test folds, each spread-strategy combination has at most 10--12 out-of-sample years. Statistical power is limited, and year-to-year variance can obscure true performance.
+
+\subsubsection{Cost Sensitivity}
+
+The 1-tick-per-leg cost assumption is optimistic. Higher costs (e.g., 2 ticks per leg) would materially reduce or eliminate the observed edge.
+
+\subsubsection{Parameter Instability}
+
+Walk-forward selection picks different parameters across years, suggesting the optimal parameterization is not stable over time. This raises concerns about overfitting.
+
+\subsection{Economic Interpretation}
+
+The modest success of carry strategies is consistent with:
+
+\begin{enumerate}
+    \item \textbf{Roll pressure}: Long-only index and ETF positions roll from front to back contracts, creating predictable spread dynamics
+    \item \textbf{Convergence}: Front contracts converge to spot faster than back contracts, supporting carry-based positions
+    \item \textbf{Financing costs}: Term structure slope reflects storage and financing costs, which are relatively predictable
+\end{enumerate}
+
+The failure of mean reversion strategies suggests that:
+
+\begin{enumerate}
+    \item DTE-conditioned deviations may reflect information (not noise) that persists or reverses unpredictably
+    \item Transaction costs are too high relative to the mean reversion signal strength
+    \item The DTE conditioning may require finer binning or alternative signal construction
+\end{enumerate}
+
+\subsection{Practical Considerations}
+
+For practitioners considering implementation:
+
+\begin{enumerate}
+    \item \textbf{Focus on carry}: The carry family is the only one with consistent out-of-sample evidence; mean reversion should be avoided.
+    \item \textbf{Spread selection}: S1 and S2 offer the best trade-off between performance and sample depth.
+    \item \textbf{Roll awareness}: Monitor roll windows and consider regime-dependent position sizing.
+    \item \textbf{Cost monitoring}: The strategy margin is thin; execution quality is critical.
+    \item \textbf{Diversification}: Consider other base metals (AL, ZN) to reduce single-market concentration.
+\end{enumerate}
+
+%------------------------------------------------------------------------------
+\section{Conclusion}
+%------------------------------------------------------------------------------
+
+This analysis of HG spread strategy search yields three main conclusions:
+
+\begin{enumerate}
+    \item \textbf{Carry strategies show promise}: Adjacent-spread carry strategies (especially S1 and S2) produce positive out-of-sample performance under realistic assumptions, with Sharpe ratios in the 0.2--0.5 range.
+    
+    \item \textbf{Mean reversion is not viable}: DTE-conditioned mean reversion fails to produce stable after-cost returns across all spreads, with high drawdowns and negative out-of-sample Sharpe ratios.
+    
+    \item \textbf{Roll filtering is inconclusive}: Excluding roll windows does not uniformly improve performance and may hurt certain spreads; the optimal roll treatment is spread-dependent.
+\end{enumerate}
+
+\subsection{Next Steps}
+
+Immediate next steps to strengthen the analysis:
+
+\begin{enumerate}
+    \item \textbf{Stricter accounting}: Add a conservative out-of-sample accounting convention (carry forward cash during years with no eligible fold) to avoid optimistic stitched metrics.
+    
+    \item \textbf{Regime conditioning}: Cautiously expand regime conditioning (e.g., add roll-share-based windows, volatility regimes) and evaluate robustness under higher cost stress.
+    
+    \item \textbf{Execution realism}: Test bucket-level execution proxies (e.g., bucket 1 close) to assess sensitivity to execution timing.
+    
+    \item \textbf{Cross-market validation}: Extend the analysis to other base metals (AL, ZN, NI) to test whether the carry effect generalizes.
+    
+    \item \textbf{Multi-spread portfolio}: Evaluate a portfolio that trades multiple spreads simultaneously to reduce idiosyncratic risk.
+\end{enumerate}
+
+\end{document}

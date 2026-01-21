@@ -228,6 +228,25 @@ Walk-forward OOS test (A + B, yearly re-selection):
 python scripts/run_walk_forward_ab.py --symbol HG --out output/analysis/wf --roll-filter exclude_roll --max-dd 0.15
 ```
 
+### LaTeX report (HG spread strategy search)
+
+This report pulls together the walk-forward results into a small set of standardized figures/tables.
+
+1) Generate report assets (figures + LaTeX table snippets) under `output/`:
+
+```bash
+python scripts/build_hg_spread_strategy_search_report.py
+```
+
+2) Compile the PDF (build artifacts go to `output/`, PDF is copied to `reports/`):
+
+```bash
+cd reports
+latexmk -pdf -interaction=nonstopmode -halt-on-error -outdir=../output/.latex_build/hg_spread_strategy_search hg_spread_strategy_search.tex
+cp ../output/.latex_build/hg_spread_strategy_search/hg_spread_strategy_search.pdf hg_spread_strategy_search.pdf
+latexmk -c -outdir=../output/.latex_build/hg_spread_strategy_search hg_spread_strategy_search.tex
+```
+
 Notes:
 
 - Signals use a US-session VWAP proxy (volume-weighted bucket closes across buckets 1–7).

@@ -39,6 +39,9 @@ research_outputs/
 *.fdb_latexmk
 *.synctex.gz
 
+# Report PDFs (generated locally)
+reports/*.pdf
+
 # OS
 .DS_Store
 Thumbs.db
