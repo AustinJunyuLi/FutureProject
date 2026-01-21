@@ -198,4 +198,34 @@ Buckets are defined in exchange time (CT):
 ## Outputs
 
 - `metadata/`: calendars and expiry tables (generated; not committed)
+
+## Analysis (research / local)
+
+The pipeline (Stages 0–2) produces deterministic curve + spreads panels. The following research scripts build on those
+Stage2 outputs and write results to `output/` (gitignored).
+
+### Strategy scans (HG, S1–S4)
+
+Inputs required:
+
+- `data_parquet/spreads/HG/spreads_panel.parquet`
+
+Carry / roll-down scan (Strategy family A):
+
+```bash
+python scripts/run_spread_carry.py --symbol HG --out output/analysis --top-n 50 --max-dd 0.15
+```
+
+DTE-conditioned mean reversion scan (Strategy family B):
+
+```bash
+python scripts/run_spread_mean_reversion.py --symbol HG --out output/analysis --top-n 50 --max-dd 0.15
+```
+
+Notes:
+
+- Signals use a US-session VWAP proxy (volume-weighted bucket closes across buckets 1–7).
+- Execution is modeled at the next trade_date’s bucket 1 price (09:00–09:59 CT).
+- Costs use `HG` tick/value from `src/futures_curve/stage0/contract_specs.py` and assume **1 tick per leg per side**
+  for spread trading (2 legs).
 - `data_parquet/`: bucket data, curve panel, spreads, roll events (generated; not committed)
