@@ -22,8 +22,15 @@ def _vwap_from_bucket_close(
     price: pd.Series,
     volume: pd.Series,
 ) -> float:
-    vol = volume.fillna(0.0).astype("float64")
+    vol = volume.astype("float64")
     px = price.astype("float64")
+
+    mask = px.notna() & vol.notna() & (vol > 0)
+    if not mask.any():
+        return float("nan")
+
+    vol = vol.loc[mask]
+    px = px.loc[mask]
     denom = vol.sum()
     if denom <= 0:
         return float("nan")
@@ -120,12 +127,25 @@ def build_daily_spread_series(
         )
     daily = pd.DataFrame.from_records(records).sort_values("trade_date").set_index("trade_date")
 
-    # Execution price: bucket close at execution_bucket.
-    exec_df = df[df["bucket"] == config.execution_bucket].copy()
-    exec_df = exec_df.sort_values("trade_date").set_index("trade_date")
-    daily["fnear_exec"] = exec_df[near_price]
-    daily["ffar_exec"] = exec_df[far_price]
-    daily["s_exec"] = exec_df[far_price] - exec_df[near_price]
+    # Execution price:
+    # - default: bucket close at `execution_bucket`
+    # - if enabled: fall back to the earliest US-session bucket in [execution_bucket..7]
+    #   where both legs have prints (reduces sample loss).
+    exec_candidates = df[df["bucket"].between(config.execution_bucket, 7)].copy()
+    exec_candidates = exec_candidates.sort_values(["trade_date", "bucket"])
+    exec_candidates = exec_candidates[exec_candidates[near_price].notna() & exec_candidates[far_price].notna()].copy()
+
+    if config.execution_fallback_to_earliest_us_bucket:
+        exec_selected = exec_candidates.groupby("trade_date", as_index=False).head(1).copy()
+    else:
+        exec_selected = exec_candidates[exec_candidates["bucket"] == config.execution_bucket].copy()
+
+    exec_selected = exec_selected.set_index("trade_date").sort_index()
+    daily["exec_bucket"] = exec_selected["bucket"]
+    daily["fnear_exec"] = exec_selected[near_price]
+    daily["ffar_exec"] = exec_selected[far_price]
+    daily["s_exec"] = daily["ffar_exec"] - daily["fnear_exec"]
+    daily["s_exec_pct"] = (daily["s_exec"] / daily["fnear_exec"]).where(daily["fnear_exec"].notna() & (daily["fnear_exec"] != 0))
 
     # Drop dates where execution price is missing.
     daily = daily.dropna(subset=["s_exec"]).copy()
@@ -140,4 +160,3 @@ def build_daily_spread_series(
         contract_size=spec.contract_size,
         dollars_per_tick=spec.point_value,
     )
-

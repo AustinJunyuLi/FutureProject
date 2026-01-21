@@ -18,6 +18,9 @@ class AnalysisConfig:
 
     # Execution convention: next trade_date bucket 1 (09:00–09:59 CT)
     execution_bucket: int = 1
+    # If True, use the earliest available US-session bucket in [execution_bucket..7]
+    # where both legs have prints. This reduces sample loss from thin early buckets.
+    execution_fallback_to_earliest_us_bucket: bool = True
 
     # Risk / evaluation
     initial_capital: float = 1_000_000.0
@@ -36,3 +39,6 @@ class AnalysisConfig:
     # If True, allow fractional contract counts in sizing (research mode).
     allow_fractional_contracts: bool = True
 
+    # Walk-forward / OOS gating (avoid “no-trade” folds)
+    min_train_nonzero_days: int = 252  # roughly 1 year of exposure over training sample
+    min_test_nonzero_days: int = 20

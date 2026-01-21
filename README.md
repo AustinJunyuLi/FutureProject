@@ -222,10 +222,16 @@ DTE-conditioned mean reversion scan (Strategy family B):
 python scripts/run_spread_mean_reversion.py --symbol HG --out output/analysis --top-n 50 --max-dd 0.15
 ```
 
+Walk-forward OOS test (A + B, yearly re-selection):
+
+```bash
+python scripts/run_walk_forward_ab.py --symbol HG --out output/analysis/wf --roll-filter exclude_roll --max-dd 0.15
+```
+
 Notes:
 
 - Signals use a US-session VWAP proxy (volume-weighted bucket closes across buckets 1–7).
-- Execution is modeled at the next trade_date’s bucket 1 price (09:00–09:59 CT).
+- Execution is modeled at the next trade_date’s earliest available US-session bucket (bucket 1 preferred; falls back to 2–7 if needed).
 - Costs use `HG` tick/value from `src/futures_curve/stage0/contract_specs.py` and assume **1 tick per leg per side**
   for spread trading (2 legs).
 - `data_parquet/`: bucket data, curve panel, spreads, roll events (generated; not committed)
