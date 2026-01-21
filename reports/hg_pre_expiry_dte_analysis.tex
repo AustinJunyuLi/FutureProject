@@ -3,6 +3,7 @@
 \usepackage{graphicx}
 \graphicspath{{output/}{../output/}}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{parskip}
 \usepackage{hyperref}
 \usepackage{amsmath}
@@ -385,7 +386,9 @@ Table~\ref{tab:robustness_scenarios} defines the robustness scenarios under the 
 \centering
 \caption{Robustness Testing Scenarios}
 \label{tab:robustness_scenarios}
-\begin{tabular}{llll}
+{\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{3.2cm}>{\raggedright\arraybackslash}p{6.0cm}>{\raggedright\arraybackslash}p{2.4cm}}
 \toprule
 Scenario & S1 Execution Proxy & Timing Interpretation & Cost Model \\
 \midrule
@@ -395,6 +398,7 @@ Exec: full US VWAP & VWAP buckets 1--7 & Mixed execution proxy (includes bucket 
 Double cost & VWAP buckets 2--7 & Same as baseline & 2 ticks/leg/side \\
 \bottomrule
 \end{tabular}
+}
 \end{table}
 
 \subsection{Pooled Results}
