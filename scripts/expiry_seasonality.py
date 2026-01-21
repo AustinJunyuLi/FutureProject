@@ -152,8 +152,8 @@ def main() -> int:
     ap.add_argument("--metric", choices=["level", "diff"], default="level")
     ap.add_argument(
         "--source",
-        choices=["us_vwap", "bucket1"],
-        default="us_vwap",
+        choices=["rest_vwap", "us_vwap", "bucket1"],
+        default="rest_vwap",
         help="Daily price source: US-session VWAP or bucket1 close",
     )
     ap.add_argument(

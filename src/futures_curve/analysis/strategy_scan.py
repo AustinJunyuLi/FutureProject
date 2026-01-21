@@ -13,7 +13,7 @@ from .expiry_seasonality import DailySeriesConfig, build_daily_spread_series, al
 
 
 HG_TICK_SIZE_USD_PER_LB = 0.0005  # COMEX HG tick size (USD/lb). Source: CME Group.
-# Reference: https://www.cmegroup.com/education/articles-and-reports/hedging-with-comex-copper-futures.html
+# Reference: https://www.cmegroup.com/articles/faqs/micro-copper-futures-faq.html
 HG_CONTRACT_SIZE_LB = 25_000
 
 
@@ -97,6 +97,7 @@ def compute_dte_drift_stats(
     dte_max: int,
     output_png: Path,
     output_csv: Path,
+    title: str | None = None,
 ) -> pd.DataFrame:
     """Compute and plot mean ΔS1 by DTE using IQR bands."""
     df = panel.dropna(subset=["ds1", "dte_bdays", "near_contract"]).copy()
@@ -113,7 +114,7 @@ def compute_dte_drift_stats(
 
     avg_df = plot_average_by_dte(
         cleaned,
-        title=f"ΔS1 by DTE — {dte_max}-day window (US VWAP, shift=0)",
+        title=title or f"ΔS1 by DTE — {dte_max}-day window",
         ylabel="ΔS1 (daily change)",
         output_png=output_png,
     )

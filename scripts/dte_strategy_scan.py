@@ -108,8 +108,20 @@ def main() -> int:
     ap.add_argument("--symbol", default="HG", help="Commodity symbol")
     ap.add_argument("--start-year", type=int, default=2008)
     ap.add_argument("--end-year", type=int, default=2024)
-    ap.add_argument("--source", choices=["us_vwap", "bucket1"], default="us_vwap")
-    ap.add_argument("--execution-shift", type=int, default=0)
+    ap.add_argument(
+        "--s1-source",
+        choices=["rest_vwap", "us_vwap", "bucket1"],
+        default="rest_vwap",
+        help="S1 execution price source (baseline: rest_vwap = VWAP over buckets 2-7).",
+    )
+    ap.add_argument(
+        "--s2-source",
+        choices=["bucket1", "rest_vwap", "us_vwap"],
+        default="bucket1",
+        help="S2 signal source (baseline: bucket1 close).",
+    )
+    ap.add_argument("--s1-shift", type=int, default=0, help="Business-day shift for S1 execution price")
+    ap.add_argument("--s2-shift", type=int, default=0, help="Business-day shift for S2 signal")
     ap.add_argument("--dte-max", type=int, default=20)
     ap.add_argument("--entry-min", type=int, default=5)
     ap.add_argument("--entry-max", type=int, default=20)
@@ -128,12 +140,14 @@ def main() -> int:
     spread_panel = read_spread_panel(Path(args.data_dir), args.symbol)
     spread_panel["trade_date"] = pd.to_datetime(spread_panel["trade_date"])
 
-    cfg = DailySeriesConfig(source=args.source, execution_shift_bdays=args.execution_shift)
+    s1_cfg = DailySeriesConfig(source=args.s1_source, execution_shift_bdays=args.s1_shift)
+    s2_cfg = DailySeriesConfig(source=args.s2_source, execution_shift_bdays=args.s2_shift)
     panel = build_strategy_panel(
         spread_panel,
         start_year=args.start_year,
         end_year=args.end_year,
-        config=cfg,
+        s1_config=s1_cfg,
+        s2_config=s2_cfg,
     )
     panel.to_csv(panel_out, index=False)
     LOGGER.info("Wrote %s", panel_out)
@@ -141,7 +155,8 @@ def main() -> int:
     # DTE drift stats for ΔS1
     drift_png = outdir / "dte_drift_s1_average.png"
     drift_csv = outdir / "dte_drift_s1_average.csv"
-    compute_dte_drift_stats(panel, dte_max=args.dte_max, output_png=drift_png, output_csv=drift_csv)
+    title = f"ΔS1 by DTE — {args.dte_max}-day window (S1={args.s1_source}, S2={args.s2_source})"
+    compute_dte_drift_stats(panel, dte_max=args.dte_max, output_png=drift_png, output_csv=drift_csv, title=title)
     LOGGER.info("Wrote %s", drift_png)
     LOGGER.info("Wrote %s", drift_csv)
 
@@ -172,8 +187,8 @@ DTE Strategy Scan (S1)
 Inputs
 - Symbol: {args.symbol}
 - Years: {args.start_year}–{args.end_year}
-- Daily series: {args.source} (US session VWAP)
-- Execution shift: {args.execution_shift}
+- S1 execution series: {args.s1_source} (shift={args.s1_shift})
+- S2 signal series: {args.s2_source} (shift={args.s2_shift})
 - DTE window: entry {args.entry_min}–{args.entry_max}, exit 0–{args.exit_max}
 
 Cost model
@@ -182,7 +197,7 @@ Cost model
 - Ticks per leg per side: {args.cost_ticks}
 - Round-trip spread cost: {cost_model.round_trip_spread_cost:.4f} $/lb
 - Round-trip cost per contract: ${cost_model.round_trip_dollar_cost:,.2f}
-- Source: CME Group HG contract specs (https://www.cmegroup.com/education/articles-and-reports/hedging-with-comex-copper-futures.html)
+- Source: CME Group (tick size / contract size): https://www.cmegroup.com/articles/faqs/micro-copper-futures-faq.html
 
 This scan reports gross and net metrics (after the round-trip cost).
 Regimes:

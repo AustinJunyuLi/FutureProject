@@ -42,10 +42,20 @@ def main() -> int:
     ap.add_argument("--dte-max", type=int, default=20)
     ap.add_argument("--entry-dte", type=int, required=True, help="Entry DTE used to define S2 regime (signal day).")
 
-    ap.add_argument("--source", choices=["us_vwap", "bucket1"], default="us_vwap", help="S1 execution price source")
-    ap.add_argument("--execution-shift", type=int, default=0, help="S1 execution shift (business days)")
+    ap.add_argument(
+        "--s1-source",
+        choices=["rest_vwap", "us_vwap", "bucket1"],
+        default="rest_vwap",
+        help="S1 execution price source (baseline: rest_vwap = VWAP over buckets 2-7).",
+    )
+    ap.add_argument("--s1-shift", type=int, default=0, help="S1 execution shift (business days)")
 
-    ap.add_argument("--s2-source", choices=["us_vwap", "bucket1"], default=None, help="S2 signal source (defaults to --source)")
+    ap.add_argument(
+        "--s2-source",
+        choices=["bucket1", "rest_vwap", "us_vwap"],
+        default="bucket1",
+        help="S2 signal source (baseline: bucket1 close).",
+    )
     ap.add_argument("--s2-shift", type=int, default=0, help="S2 signal shift (business days)")
 
     ap.add_argument("--baseline-dte", type=int, default=20, help="Baseline DTE for cumulative drift normalization")
@@ -58,16 +68,15 @@ def main() -> int:
 
     scenario = (
         args.scenario
-        or f"s1_{args.source}_shift{args.execution_shift}__s2_{args.s2_source or args.source}_shift{args.s2_shift}__entry{args.entry_dte}"
+        or f"s1_{args.s1_source}_shift{args.s1_shift}__s2_{args.s2_source}_shift{args.s2_shift}__entry{args.entry_dte}"
     )
     outdir = _ensure_dir(Path(args.outdir) / "event_study" / scenario)
 
     spread_panel = read_spread_panel(Path(args.data_dir), args.symbol)
     spread_panel["trade_date"] = pd.to_datetime(spread_panel["trade_date"])
 
-    s2_source = args.s2_source or args.source
-    s1_cfg = DailySeriesConfig(source=args.source, execution_shift_bdays=int(args.execution_shift))
-    s2_cfg = DailySeriesConfig(source=s2_source, execution_shift_bdays=int(args.s2_shift))
+    s1_cfg = DailySeriesConfig(source=args.s1_source, execution_shift_bdays=int(args.s1_shift))
+    s2_cfg = DailySeriesConfig(source=args.s2_source, execution_shift_bdays=int(args.s2_shift))
 
     panel = build_strategy_panel(
         spread_panel,
@@ -126,9 +135,9 @@ Regime definition (entry-day S2):
 - s2_neg: include cycles with S2(entry) < 0
 
 Series:
-- S1 source: {args.source}
-- S1 execution shift: {args.execution_shift}
-- S2 source (signal): {s2_source}
+- S1 source: {args.s1_source}
+- S1 execution shift: {args.s1_shift}
+- S2 source (signal): {args.s2_source}
 - S2 shift (signal): {args.s2_shift}
 
 Outputs:

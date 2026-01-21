@@ -50,7 +50,18 @@ def main() -> int:
     ap.add_argument("--exit-max", type=int, default=4)
     ap.add_argument("--min-trades", type=int, default=50)
     ap.add_argument("--rank-top-n", type=int, default=50)
-    ap.add_argument("--baseline-source", choices=["us_vwap", "bucket1"], default="us_vwap")
+    ap.add_argument(
+        "--baseline-s1-source",
+        choices=["rest_vwap", "us_vwap", "bucket1"],
+        default="rest_vwap",
+        help="Baseline S1 execution source (default: rest_vwap).",
+    )
+    ap.add_argument(
+        "--baseline-s2-source",
+        choices=["bucket1", "rest_vwap", "us_vwap"],
+        default="bucket1",
+        help="Baseline S2 signal source (default: bucket1).",
+    )
     ap.add_argument("--baseline-cost-ticks", type=float, default=1.0, help="Ticks per leg per side (baseline)")
     ap.add_argument("--outdir", default="output")
     ap.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -64,13 +75,14 @@ def main() -> int:
     spread_panel["trade_date"] = pd.to_datetime(spread_panel["trade_date"])
 
     # Fixed signal panel (baseline): used for S2 regime membership at entry.
-    signal_cfg = DailySeriesConfig(source=args.baseline_source, execution_shift_bdays=0)
+    s1_baseline_cfg = DailySeriesConfig(source=args.baseline_s1_source, execution_shift_bdays=0)
+    s2_baseline_cfg = DailySeriesConfig(source=args.baseline_s2_source, execution_shift_bdays=0)
     signal_panel = build_strategy_panel(
         spread_panel,
         start_year=int(args.start_year),
         end_year=int(args.end_year),
-        s1_config=signal_cfg,
-        s2_config=signal_cfg,
+        s1_config=s1_baseline_cfg,
+        s2_config=s2_baseline_cfg,
     )
 
     entry_dtes = range(int(args.entry_min), int(args.entry_max) + 1)
@@ -95,25 +107,10 @@ def main() -> int:
     LOGGER.info("Wrote %s", ranked_path)
 
     scenarios = [
-        Scenario(
-            name=f"baseline_{args.baseline_source}_shift0_cost1",
-            s1_source=args.baseline_source,
-            s1_shift=0,
-            cost_ticks=float(args.baseline_cost_ticks),
-        ),
-        Scenario(
-            name=f"shift1_{args.baseline_source}_cost1",
-            s1_source=args.baseline_source,
-            s1_shift=1,
-            cost_ticks=float(args.baseline_cost_ticks),
-        ),
-        Scenario(name="bucket1_shift0_cost1", s1_source="bucket1", s1_shift=0, cost_ticks=float(args.baseline_cost_ticks)),
-        Scenario(
-            name=f"baseline_{args.baseline_source}_shift0_cost2",
-            s1_source=args.baseline_source,
-            s1_shift=0,
-            cost_ticks=float(args.baseline_cost_ticks) * 2.0,
-        ),
+        Scenario(name="baseline", s1_source=args.baseline_s1_source, s1_shift=0, cost_ticks=float(args.baseline_cost_ticks)),
+        Scenario(name="exec_bucket1", s1_source="bucket1", s1_shift=0, cost_ticks=float(args.baseline_cost_ticks)),
+        Scenario(name="exec_us_vwap", s1_source="us_vwap", s1_shift=0, cost_ticks=float(args.baseline_cost_ticks)),
+        Scenario(name="baseline_cost2", s1_source=args.baseline_s1_source, s1_shift=0, cost_ticks=float(args.baseline_cost_ticks) * 2.0),
     ]
 
     summary_rows = []
@@ -121,13 +118,13 @@ def main() -> int:
         scenario_dir = _ensure_dir(out_root / scenario.name)
 
         exec_cfg = DailySeriesConfig(source=scenario.s1_source, execution_shift_bdays=int(scenario.s1_shift))
-        # Keep S2 unshifted and on the baseline source so regime membership stays fixed.
+        # Keep S2 on the baseline signal definition so regime membership stays fixed.
         execution_panel = build_strategy_panel(
             spread_panel,
             start_year=int(args.start_year),
             end_year=int(args.end_year),
             s1_config=exec_cfg,
-            s2_config=signal_cfg,
+            s2_config=s2_baseline_cfg,
         )
 
         cost_model = CostModel(ticks_per_leg_side=float(scenario.cost_ticks))
@@ -163,7 +160,7 @@ def main() -> int:
 
 Signal is held fixed:
 - S2 regime membership is defined using baseline signal panel:
-  - source={args.baseline_source}
+  - S2 source={args.baseline_s2_source}
   - shift=0
 
 Rule selection:
@@ -172,10 +169,10 @@ Rule selection:
 - Candidate search: entry_dte={args.entry_min}..{args.entry_max}, exit_dte=0..{args.exit_max}, both directions, regimes={{all,s2_pos,s2_neg}}
 
 Execution scenarios:
-- baseline_{args.baseline_source}_shift0_cost1: {args.baseline_source}, shift=0, cost={args.baseline_cost_ticks} ticks/leg/side
-- shift1_{args.baseline_source}_cost1: {args.baseline_source}, shift=1 (next-bday execution aligned to signal day), cost={args.baseline_cost_ticks}
-- bucket1_shift0_cost1: bucket1, shift=0, cost={args.baseline_cost_ticks}
-- baseline_{args.baseline_source}_shift0_cost2: {args.baseline_source}, shift=0, cost doubled
+- baseline: {args.baseline_s1_source}, shift=0, cost={args.baseline_cost_ticks} ticks/leg/side
+- exec_bucket1: bucket1 close, shift=0, cost={args.baseline_cost_ticks}
+- exec_us_vwap: us_vwap (buckets 1-7), shift=0, cost={args.baseline_cost_ticks}
+- baseline_cost2: {args.baseline_s1_source}, shift=0, cost doubled
 
 Files:
 - baseline_rule.json: selected rule parameters

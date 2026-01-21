@@ -1,57 +1,57 @@
-\section*{Top ranked windows (in-sample; costed)}
+\subsection*{Top ranked windows (in-sample; costed)}
 
 \footnotesize
 
-\begin{tabular}{lrrrrrr}
+\begin{tabular}{lrrrrrrr}
 \toprule
-Regime & Dir & Entry & Exit & N & Net mean (USD/ct) & Net t \\
+Regime & Dir & Entry & Exit & N & Net mean (USD/ct) & Net Sharpe-like & Net t \\
 \midrule
 
-s2\_pos & short & 20 & 0 & 128 & 71.70 & 3.70 \\
-s2\_pos & short & 20 & 1 & 129 & 76.57 & 3.69 \\
-s2\_pos & short & 20 & 4 & 129 & 67.09 & 3.64 \\
-s2\_pos & short & 20 & 2 & 128 & 52.30 & 3.10 \\
-s2\_pos & short & 18 & 1 & 157 & 52.88 & 3.37 \\
-s2\_pos & short & 20 & 3 & 129 & 54.37 & 3.05 \\
-s2\_pos & short & 17 & 1 & 157 & 51.79 & 3.33 \\
-s2\_pos & short & 17 & 2 & 155 & 39.88 & 2.84 \\
-s2\_pos & short & 18 & 4 & 157 & 44.15 & 2.84 \\
-s2\_pos & short & 17 & 0 & 156 & 37.65 & 2.60 \\
+S2 $\geq$ 0 & Short & 18 & 4 & 122 & 54.29 & 0.29 & 3.17 \\
+S2 $\geq$ 0 & Short & 18 & 1 & 122 & 59.72 & 0.26 & 2.89 \\
+S2 $\geq$ 0 & Short & 18 & 2 & 121 & 43.61 & 0.26 & 2.81 \\
+S2 $\geq$ 0 & Short & 18 & 3 & 122 & 42.27 & 0.22 & 2.44 \\
+S2 $\geq$ 0 & Short & 18 & 0 & 121 & 38.19 & 0.21 & 2.33 \\
+S2 $\geq$ 0 & Short & 19 & 2 & 122 & 41.29 & 0.20 & 2.16 \\
+S2 $\geq$ 0 & Short & 17 & 1 & 117 & 33.23 & 0.19 & 2.09 \\
+S2 $\geq$ 0 & Short & 19 & 4 & 122 & 39.15 & 0.19 & 2.11 \\
+S2 $\geq$ 0 & Short & 20 & 1 & 109 & 54.35 & 0.19 & 1.95 \\
+S2 $\geq$ 0 & Short & 17 & 4 & 117 & 32.14 & 0.19 & 2.01 \\
 
 \bottomrule
 \end{tabular}
 
 \normalsize
 
-\section*{Walk-forward out-of-sample summary}
+\subsection*{Walk-forward out-of-sample summary}
 
 \footnotesize
 
-\begin{tabular}{lrrrrrrrr}
+\begin{tabular}{lrrrrrrrrr}
 \toprule
-Year & Regime & Dir & Entry & Exit & N & Net mean (USD/ct) & Net t & Win \\
+Year & Regime & Dir & Entry & Exit & N & Net mean (USD/ct) & Net Sharpe-like & Net t & Win \\
 \midrule
 
-2013 & all & short & 12 & 1 & 12 & 49.23 & 2.02 & 0.67 \\
-2014 & s2\_pos & short & 18 & 1 & 6 & 15.22 & 0.12 & 0.50 \\
-2015 & s2\_pos & short & 17 & 1 & 8 & 100.57 & 0.62 & 0.50 \\
-2016 & s2\_pos & short & 17 & 1 & 12 & -12.77 & -0.56 & 0.50 \\
-2017 & s2\_pos & short & 17 & 1 & 12 & 54.90 & 2.56 & 0.67 \\
-2018 & s2\_pos & short & 17 & 1 & 12 & 56.54 & 1.44 & 0.75 \\
-2019 & s2\_pos & short & 17 & 1 & 9 & 38.95 & 1.07 & 0.56 \\
-2020 & s2\_pos & short & 17 & 1 & 10 & -66.73 & -1.88 & 0.20 \\
-2021 & s2\_pos & short & 17 & 1 & 6 & -56.61 & -0.82 & 0.33 \\
-2022 & s2\_pos & short & 17 & 1 & 7 & 7.27 & 0.11 & 0.43 \\
-2023 & s2\_pos & short & 20 & 0 & 8 & 183.16 & 2.50 & 0.88 \\
-2024 & s2\_pos & short & 20 & 0 & 10 & 208.26 & 1.52 & 0.70 \\
-pooled & nan & nan &  &  & 112 & 50.12 & 2.36 & 0.57 \\
+2013 & All & Short & 12 & 0 & 12 & -40.06 & -0.40 & -1.38 & 33.3\% \\
+2014 & All & Short & 12 & 0 & 12 & -201.20 & -0.52 & -1.80 & 33.3\% \\
+2015 & S2 $\geq$ 0 & Short & 12 & 2 & 5 & -92.75 & -0.31 & -0.69 & 40.0\% \\
+2016 & S2 $\geq$ 0 & Short & 17 & 0 & 9 & -25.04 & -0.34 & -1.03 & 33.3\% \\
+2017 & S2 $\geq$ 0 & Short & 18 & 2 & 9 & 27.69 & 0.30 & 0.89 & 66.7\% \\
+2018 & S2 $\geq$ 0 & Short & 17 & 0 & 10 & 68.15 & 0.77 & 2.45 & 90.0\% \\
+2019 & S2 $\geq$ 0 & Short & 18 & 2 & 8 & 5.20 & 0.08 & 0.24 & 37.5\% \\
+2020 & S2 $\geq$ 0 & Short & 18 & 2 & 6 & -40.79 & -0.40 & -0.97 & 33.3\% \\
+2021 & S2 $\geq$ 0 & Short & 18 & 2 & 7 & -152.01 & -1.39 & -3.67 & 0.0\% \\
+2022 & S2 $\geq$ 0 & Short & 18 & 4 & 5 & 188.10 & 0.69 & 1.54 & 80.0\% \\
+2023 & S2 $\geq$ 0 & Short & 18 & 4 & 9 & 46.02 & 0.39 & 1.18 & 55.6\% \\
+2024 & S2 $\geq$ 0 & Short & 18 & 4 & 7 & 74.01 & 0.62 & 1.63 & 57.1\% \\
+Pooled &  &  &  &  & 99 & -20.69 & -0.10 & -1.03 & 46.5\% \\
 
 \bottomrule
 \end{tabular}
 
 \normalsize
 
-\section*{Fixed-rule robustness (pooled)}
+\subsection*{Fixed-rule robustness (pooled)}
 
 \footnotesize
 
@@ -60,17 +60,17 @@ pooled & nan & nan &  &  & 112 & 50.12 & 2.36 & 0.57 \\
 Scenario & N & Net mean (USD/ct) & Net t & Win \\
 \midrule
 
-baseline\_us\_vwap\_shift0\_cost1 & 128 & 71.70 & 3.70 & 0.69 \\
-shift1\_us\_vwap\_cost1 & 129 & -65.35 & -3.25 & 0.35 \\
-bucket1\_shift0\_cost1 & 57 & 141.89 & 2.70 & 0.70 \\
-baseline\_us\_vwap\_shift0\_cost2 & 128 & 21.70 & 1.12 & 0.55 \\
+Baseline (VWAP buckets 2--7, cost=1) & 122 & 54.29 & 3.17 & 56.6\% \\
+Exec: bucket 1 close (cost=1) & 62 & 6.45 & 0.17 & 45.2\% \\
+Exec: full US VWAP (cost=1) & 122 & 41.39 & 2.35 & 56.6\% \\
+Baseline (VWAP buckets 2--7, cost=2) & 122 & 4.29 & 0.25 & 43.4\% \\
 
 \bottomrule
 \end{tabular}
 
 \normalsize
 
-\section*{Baseline fixed-rule performance by expiry year}
+\subsection*{Baseline fixed-rule performance by expiry year}
 
 \footnotesize
 
@@ -79,24 +79,24 @@ baseline\_us\_vwap\_shift0\_cost2 & 128 & 21.70 & 1.12 & 0.55 \\
 Expiry yr & N & Net mean (USD/ct) & Net t & Win \\
 \midrule
 
-2008 & 4 & -268.69 & -1.55 & 0.25 \\
-2009 & 8 & 8.23 & 0.16 & 0.50 \\
-2010 & 10 & 84.02 & 2.92 & 1.00 \\
-2011 & 10 & 169.10 & 4.49 & 0.90 \\
-2012 & 7 & -63.09 & -1.25 & 0.43 \\
-2013 & 9 & 153.71 & 2.70 & 0.78 \\
-2014 & 4 & 115.66 & 1.82 & 0.75 \\
-2015 & 6 & -71.77 & -0.40 & 0.33 \\
-2016 & 10 & 23.38 & 0.75 & 0.60 \\
-2017 & 8 & 94.90 & 3.47 & 0.88 \\
-2018 & 8 & 149.41 & 2.37 & 0.88 \\
-2019 & 7 & 63.22 & 2.10 & 0.86 \\
-2020 & 8 & 33.75 & 0.54 & 0.50 \\
-2021 & 5 & -38.13 & -1.20 & 0.20 \\
-2022 & 6 & 70.67 & 1.39 & 0.67 \\
-2023 & 8 & 183.16 & 2.50 & 0.88 \\
-2024 & 10 & 208.26 & 1.52 & 0.70 \\
-pooled & 128 & 71.70 & 3.70 & 0.69 \\
+2008 & 3 & -205.53 & -0.94 & 33.3\% \\
+2009 & 8 & 63.31 & 1.35 & 62.5\% \\
+2010 & 10 & 154.50 & 1.44 & 60.0\% \\
+2011 & 8 & 181.52 & 4.03 & 87.5\% \\
+2012 & 8 & 1.66 & 0.03 & 37.5\% \\
+2013 & 6 & 34.81 & 0.56 & 66.7\% \\
+2014 & 6 & 54.49 & 0.54 & 66.7\% \\
+2015 & 5 & -87.21 & -0.77 & 40.0\% \\
+2016 & 8 & 12.10 & 0.51 & 37.5\% \\
+2017 & 9 & 6.88 & 0.23 & 33.3\% \\
+2018 & 9 & 124.21 & 4.89 & 100.0\% \\
+2019 & 8 & 107.48 & 1.46 & 62.5\% \\
+2020 & 6 & -33.67 & -0.86 & 33.3\% \\
+2021 & 7 & -26.30 & -0.48 & 28.6\% \\
+2022 & 5 & 188.10 & 1.54 & 80.0\% \\
+2023 & 9 & 46.02 & 1.18 & 55.6\% \\
+2024 & 7 & 74.01 & 1.63 & 57.1\% \\
+Pooled & 122 & 54.29 & 3.17 & 56.6\% \\
 
 \bottomrule
 \end{tabular}

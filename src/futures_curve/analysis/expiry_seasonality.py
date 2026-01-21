@@ -16,13 +16,14 @@ import pandas as pd
 
 
 US_SESSION_BUCKETS = (1, 2, 3, 4, 5, 6, 7)
+REST_OF_SESSION_BUCKETS = (2, 3, 4, 5, 6, 7)
 
 
 @dataclass(frozen=True)
 class DailySeriesConfig:
     """Configuration for building daily series from bucket panels."""
 
-    source: str = "bucket1"  # "us_vwap" or "bucket1"
+    source: str = "bucket1"  # "bucket1", "us_vwap", or "rest_vwap"
     execution_shift_bdays: int = 1  # shift forward (next day) for tradeable entry
     buckets: Sequence[int] = US_SESSION_BUCKETS
 
@@ -108,8 +109,8 @@ def build_daily_spread_series(
                 far_col: "far_contract",
             }
         )
-    elif cfg.source == "us_vwap":
-        buckets = tuple(int(b) for b in cfg.buckets)
+    elif cfg.source in {"us_vwap", "rest_vwap"}:
+        buckets = REST_OF_SESSION_BUCKETS if cfg.source == "rest_vwap" else tuple(int(b) for b in cfg.buckets)
         df = df[df["bucket"].isin(buckets)].copy()
         if df.empty:
             raise ValueError("No rows after filtering to US session buckets")
@@ -142,7 +143,7 @@ def build_daily_spread_series(
             "far_contract": far.reindex(vwap.index).values,
         }).reset_index(drop=True)
     else:
-        raise ValueError("config.source must be 'us_vwap' or 'bucket1'")
+        raise ValueError("config.source must be 'bucket1', 'us_vwap', or 'rest_vwap'")
 
     # Execution shift: align next-day tradeable price to prior day DTE
     if cfg.execution_shift_bdays:

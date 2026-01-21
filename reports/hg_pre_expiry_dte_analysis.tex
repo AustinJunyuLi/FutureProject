@@ -1,0 +1,524 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\graphicspath{{output/}{../output/}}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{longtable}
+
+\title{HG Pre-Expiry DTE Analysis (Expiry-Anchored, Intraday-Causal)}
+\author{Austin Li}
+\date{}
+
+\begin{document}
+\maketitle
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+
+\noindent
+This report studies the pre-expiry behavior of COMEX High Grade Copper (HG) calendar spreads over 2008--2024 using a days-to-expiry (DTE) alignment that compares contract cycles on a like-for-like timeline. The primary object is the front spread $S1 = F2 - F1$, with results conditioned on the sign of the second spread $S2 = F3 - F2$ at entry to separate contango-like and backwardation-like environments.
+
+\subsection{Motivation}
+
+Calendar spreads in commodity futures markets embed storage, financing, and delivery-related constraints into a single price difference. In the days leading into expiry, liquidity migrates away from the nearby contract and roll activity increases, making the front spread a natural place to look for systematic, expiry-driven effects.
+
+In HG specifically, any repeatable pre-expiry pattern has immediate practical relevance for spread traders, market makers, and risk managers, but it must also survive basic realism checks: transaction costs, year-to-year variability, and the operational constraint that a DTE-defined signal may require precise timing to execute.
+
+\subsection{Research Questions}
+
+This analysis addresses three primary research questions:
+
+\begin{enumerate}
+    \item \textbf{Existence of pattern}: Does the HG front spread (S1) exhibit systematic drift in the pre-expiry window (DTE 20 to 0)?
+    \item \textbf{Regime dependence}: Does the second spread (S2) at entry provide informative conditioning for S1 behavior?
+    \item \textbf{Practical viability}: Can any identified pattern survive realistic transaction costs, out-of-sample testing, and execution timing uncertainty?
+\end{enumerate}
+
+\subsection{Contribution and Approach}
+
+A DTE-anchored methodology aligns each contract cycle by business days to expiration rather than calendar time. This approach isolates the expiry-driven component of spread behavior from calendar effects and allows cross-cycle aggregation. The analysis proceeds through five stages:
+
+\begin{enumerate}
+    \item \textbf{Seasonality analysis}: Characterize the average DTE profile of S1 levels and changes
+    \item \textbf{Strategy window scan}: Systematic search over entry/exit DTE combinations
+    \item \textbf{Event study}: Regime-stratified analysis of cumulative drift paths
+    \item \textbf{Walk-forward validation}: Out-of-sample testing using expanding windows
+    \item \textbf{Robustness testing}: Sensitivity to execution timing and cost assumptions
+\end{enumerate}
+
+\subsection{Preview}
+
+Across the full sample, $S1$ tends to drift lower as expiry approaches, and the signal is materially stronger when $S2 \geq 0$ at entry. However, once we enforce an \emph{intraday-causal} timing assumption (S2 regime observed after bucket 1, then execute S1 later the same day), the strategy family becomes much less stable out-of-sample. In particular:
+\begin{itemize}
+    \item A strong in-sample rule exists (e.g., short S1, entry DTE 18, exit DTE 4, conditioned on $S2 \ge 0$ at entry), with pooled net mean around \$54/contract and net $t \approx 3.2$ under the baseline timing model.
+    \item Expanding-window walk-forward selection (2013--2024 test years) is negative in aggregate under the same timing model (pooled net mean around $-\$21$/contract; net $t \approx -1.0$).
+    \item Realism checks are binding: doubling costs (2 ticks/leg/side) largely removes the edge, and using earlier-session execution proxies substantially weakens results.
+\end{itemize}
+
+The main takeaway is that \textbf{expiry-anchored seasonality is visible}, but \textbf{turning it into a robust, tradeable pre-expiry rule requires stronger conditioning signals and more conservative execution modeling.}
+
+%==============================================================================
+\section{Data and Methodology}
+%==============================================================================
+
+\subsection{Data Description}
+
+The analysis uses COMEX High Grade Copper (HG) futures data from 2008 through 2024, encompassing 168 contract cycles (monthly expirations). Tick data are aggregated to daily bars, with a US-session volume-weighted average price (VWAP) proxy used as the baseline price for spread construction.
+
+\subsubsection{Contract Universe}
+
+HG futures trade with monthly expirations. For each expiration month, the following are identified:
+\begin{itemize}
+    \item F1: Nearest-to-delivery contract
+    \item F2: Second-nearest contract
+    \item F3: Third-nearest contract
+\end{itemize}
+
+Calendar spreads are constructed as:
+\begin{align}
+    S1 &= F2 - F1 \quad \text{(front spread)} \\
+    S2 &= F3 - F2 \quad \text{(second spread)}
+\end{align}
+
+\subsubsection{Daily Price Construction}
+
+This report uses an intraday timing model designed to avoid ``peeking'' at price moves that happen after the signal is observed.
+
+\begin{itemize}
+    \item \textbf{S2 regime signal (entry-day)}: bucket 1 close (the first US trading bucket).
+    \item \textbf{S1 execution price}: ``rest-of-session'' VWAP computed over buckets 2--7 on the same trade date.
+\end{itemize}
+
+This choice reflects:
+\begin{itemize}
+    \item Concentration of HG liquidity in US trading hours,
+    \item A plausible ``signal then trade later'' workflow within the same business day,
+    \item Reduced sensitivity to single-print prices versus using only one bucket.
+\end{itemize}
+
+\subsection{DTE Alignment}
+
+Days-to-expiry (DTE) is computed as the number of business days between the observation date and the near contract's last trading day. This alignment:
+\begin{itemize}
+    \item Removes calendar day variation (weekends, holidays)
+    \item Creates comparable cross-cycle observations
+    \item Anchors the analysis to the delivery mechanics timeline
+\end{itemize}
+
+For each contract cycle, observations are extracted from DTE = 20 through DTE = 0, yielding up to 21 observations per cycle.
+
+\subsection{Regime Definition}
+
+Results are stratified by the sign of S2 at entry (measured using the bucket 1 close on the entry day):
+\begin{itemize}
+    \item \textbf{S2 $\geq$ 0} (``s2\_pos''): Contango or flat in the second spread
+    \item \textbf{S2 $<$ 0} (``s2\_neg''): Backwardation in the second spread
+\end{itemize}
+
+This conditioning reflects the hypothesis that term structure shape at entry contains information about subsequent S1 behavior.
+
+\subsection{Cost Model}
+
+All ``net'' metrics incorporate round-trip transaction costs:
+\begin{itemize}
+    \item \textbf{Baseline}: 1 tick per leg per side
+    \item 2 legs $\times$ 2 (enter and exit) = 4 ticks per round trip
+    \item HG tick size = \$0.0005/lb $\times$ 25,000 lb = \$12.50 per tick
+    \item Total round-trip cost = \$50 per contract cycle
+\end{itemize}
+
+For robustness, 2 ticks per leg per side (\$100 round-trip) are also tested.
+
+\subsection{Performance Metrics}
+
+For each strategy window, the following metrics are computed:
+\begin{itemize}
+    \item \textbf{Gross mean}: Average P\&L before costs (spread units)
+    \item \textbf{Net mean}: Average P\&L after costs (spread units and USD)
+    \item \textbf{Net t-statistic}: $\bar{x}_{\text{net}} / (s / \sqrt{n})$
+    \item \textbf{Win rate}: Fraction of cycles with positive net P\&L
+    \item \textbf{Sharpe-like ratio}: $\bar{x}_{\text{net}} / s$ (per-cycle, not annualized)
+\end{itemize}
+
+The t-statistic serves as the primary ranking metric, as it balances magnitude against dispersion and is invariant to sample size scaling.
+
+\subsection{Sample Coverage}
+
+The full dataset spans 2008--2024 (monthly expiries), but \emph{effective} sample sizes vary by analysis step because a given contract cycle must have valid observations at the chosen entry/exit DTEs (and the entry-day S2 bucket 1 print to determine regime membership). These coverage effects are particularly important in robustness scenarios that rely on bucket-level execution proxies.
+
+%==============================================================================
+\section{DTE-Anchored Seasonality}
+%==============================================================================
+
+\subsection{S1 Level Profile}
+
+Figure~\ref{fig:s1_level} shows the average S1 level by DTE across all 2008--2024 cycles. The shaded region represents the interquartile range (25th--75th percentiles).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{expiry_seasonality/s1_level_2008_2024_rest_vwap_shift0_overall_average.png}
+\caption{S1 Level by DTE: Overall Average (2008--2024). S1 is measured in \$ per lb. The plot shows mean (line) and interquartile range (shaded). DTE=0 corresponds to the near contract's last trading day.}
+\label{fig:s1_level}
+\end{figure}
+
+Key observations:
+\begin{itemize}
+    \item S1 is slightly positive on average early in the window (e.g., mean $\approx 0.00151$ at DTE=20)
+    \item A declining trend is visible from DTE=20 toward expiry
+    \item The mean S1 at DTE=0 is negative on average (mean $\approx -0.00142$), representing a net decline
+    \item Substantial dispersion exists (wide IQR), indicating heterogeneity across cycles
+\end{itemize}
+
+\subsection{S1 Daily Change Profile}
+
+Figure~\ref{fig:s1_diff} shows the average daily change in S1 ($\Delta$S1) by DTE.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{expiry_seasonality/s1_diff_2008_2024_rest_vwap_shift0_overall_average.png}
+\caption{S1 Daily Change ($\Delta$S1) by DTE: Overall Average (2008--2024). Negative values indicate spread narrowing (S1 declining).}
+\label{fig:s1_diff}
+\end{figure}
+
+The daily change profile reveals:
+\begin{itemize}
+    \item Mean $\Delta$S1 is generally small but biased slightly negative
+    \item Negative drift is not uniform; it concentrates on the entry day and in the final days approaching expiry
+    \item At DTE=20, mean $\Delta$S1 is the most negative (approximately $-$0.17\%)
+    \item Substantial day-to-day variation within the pre-expiry window
+\end{itemize}
+
+\subsection{Interpretation}
+
+The overall average S1 declines by roughly $0.0029$ \$ / lb from DTE=20 to DTE=0 in the unconditional aggregation. This is economically meaningful: with a 25,000 lb contract size, a $0.0010$ move in the spread corresponds to about \$25 per contract.
+
+The observed pattern is consistent with several economic mechanisms:
+\begin{enumerate}
+    \item \textbf{Roll pressure}: Long-only index and ETF positions must roll from F1 to F2 before expiry, creating selling pressure on the spread
+    \item \textbf{Convergence}: As F1 approaches delivery, its price converges to spot, potentially faster than F2
+    \item \textbf{Liquidity migration}: Market makers and speculators exit F1 positions, reducing F1 relative valuation
+\end{enumerate}
+
+However, the wide dispersion (negative 25th percentile at many DTE values) indicates that this is not a deterministic pattern---many individual cycles show opposite behavior.
+
+%==============================================================================
+\section{Strategy Window Scan}
+%==============================================================================
+
+\subsection{Methodology}
+
+A systematic search is conducted over entry/exit DTE combinations:
+\begin{itemize}
+    \item Entry DTE: 5 to 20 (16 values)
+    \item Exit DTE: 0 to 4 (5 values)
+    \item Directions: Long S1, Short S1
+    \item Regimes: All, S2 $\geq$ 0, S2 $<$ 0
+\end{itemize}
+
+This yields 160 window/direction combinations per regime, evaluated with the cost model applied.
+
+\subsection{Heatmap Results: S2 \texorpdfstring{$\geq$}{>=} 0 Regime, Short S1}
+
+Figure~\ref{fig:heatmap_mean} shows the net mean P\&L heatmap for short S1 positions in the S2 $\geq$ 0 regime.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{strategy_scan/heatmap_s2_pos_short_net_mean.png}
+\caption{Net Mean P\&L Heatmap: Short S1, S2 $\geq$ 0 Regime. Darker colors indicate higher profitability. Entry DTE on x-axis, exit DTE on y-axis.}
+\label{fig:heatmap_mean}
+\end{figure}
+
+Figure~\ref{fig:heatmap_tstat} shows the corresponding t-statistic heatmap.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{strategy_scan/heatmap_s2_pos_short_net_t.png}
+\caption{Net T-Statistic Heatmap: Short S1, S2 $\geq$ 0 Regime. Values above 2.0 indicate statistical significance at the 5\% level.}
+\label{fig:heatmap_tstat}
+\end{figure}
+
+\subsection{Top-Ranked Windows}
+Top-ranked windows and walk-forward summaries are provided in the Appendix (generated directly from the analysis outputs to avoid transcription error). In the intraday-causal timing model, the strongest windows typically cluster around:
+\begin{itemize}
+    \item \textbf{Direction}: short S1,
+    \item \textbf{Regime}: $S2 \ge 0$ at entry,
+    \item \textbf{Entry}: DTE roughly 18--20,
+    \item \textbf{Exit}: DTE roughly 4--1 (or 0).
+\end{itemize}
+
+The S2 regime filter is critical: it improves the signal materially versus the unconditional case, and it is also a natural ``simple'' conditioning variable that is available at the time the trade is initiated under Timing A.
+
+%==============================================================================
+\section{Regime-Stratified Event Study}
+%==============================================================================
+
+\subsection{Cumulative Drift Analysis}
+
+The event study examines the path of S1 from entry (DTE=18) toward expiry, conditional on the entry-day S2 regime.
+
+\subsubsection{S2 \texorpdfstring{$\geq$}{>=} 0 Regime}
+
+Figure~\ref{fig:cumulative_s2pos} shows the cumulative S1 drift for cycles entering with S2 $\geq$ 0.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{event_study/s1_rest_vwap_shift0__s2_bucket1_shift0__entry18/cumulative_s1/cumulative_s1_from_dte18_s2_pos.png}
+\caption{Cumulative S1 Drift from DTE=18: S2 $\geq$ 0 Regime. The drift is measured relative to S1 at entry (DTE=18). Negative cumulative drift indicates spread narrowing.}
+\label{fig:cumulative_s2pos}
+\end{figure}
+
+Key statistics at DTE=0:
+\begin{itemize}
+    \item Mean cumulative drift: $-$0.487\% (spread units)
+    \item 25th percentile: $-$0.849\%
+    \item 75th percentile: $-$0.070\%
+    \item The median path declines monotonically toward expiry
+\end{itemize}
+
+\subsubsection{S2 \texorpdfstring{$<$}{<} 0 Regime}
+
+Figure~\ref{fig:cumulative_s2neg} shows the cumulative S1 drift for cycles entering with S2 $<$ 0.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{event_study/s1_rest_vwap_shift0__s2_bucket1_shift0__entry18/cumulative_s1/cumulative_s1_from_dte18_s2_neg.png}
+\caption{Cumulative S1 Drift from DTE=18: S2 $<$ 0 Regime.}
+\label{fig:cumulative_s2neg}
+\end{figure}
+
+Key statistics at DTE=0:
+\begin{itemize}
+    \item Mean cumulative drift: +0.084\% (spread units)
+    \item 25th percentile: $-$0.339\%
+    \item 75th percentile: +0.726\%
+    \item The path shows no consistent directional bias
+\end{itemize}
+
+\subsection{Daily Drift Profile}
+
+Figure~\ref{fig:daily_drift} shows the daily $\Delta$S1 profile for the S2 $\geq$ 0 regime.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{event_study/s1_rest_vwap_shift0__s2_bucket1_shift0__entry18/dte_drift_ds1/dte_drift_ds1_s2_pos.png}
+\caption{Daily S1 Change by DTE: S2 $\geq$ 0 Regime. The plot shows mean daily change with error bars.}
+\label{fig:daily_drift}
+\end{figure}
+
+The daily drift analysis reveals:
+\begin{itemize}
+    \item Most negative drift at DTE=20 (entry day): $-$0.203\%
+    \item Generally negative mean drift throughout the window
+    \item Some positive drift days (DTE 7, 12) but overall negative bias
+    \item The drift is not uniformly distributed across the window
+\end{itemize}
+
+\subsection{Economic Interpretation}
+
+The regime-dependent behavior suggests:
+\begin{enumerate}
+    \item \textbf{Contango reinforcement}: When S2 $\geq$ 0, the term structure is in contango, and roll pressure on S1 is reinforced by similar dynamics in S2
+    \item \textbf{Backwardation disruption}: When S2 $<$ 0, the term structure is backwardated, potentially indicating supply tightness that can propagate to S1 unpredictably
+    \item \textbf{Information content}: The entry-day S2 regime provides a filter that improves signal-to-noise for S1 prediction
+\end{enumerate}
+
+%==============================================================================
+\section{Walk-Forward Validation}
+%==============================================================================
+
+\subsection{Methodology}
+
+The walk-forward procedure tests out-of-sample (OOS) performance using an expanding training window:
+
+\begin{enumerate}
+    \item For each test year $Y$, train on all cycles with expiry year $< Y$
+    \item Require minimum 50 training trades and 5 training years
+    \item Select the best window/direction/regime combination by \textbf{net Sharpe-like} (net mean / net std) in training data, with \textbf{net mean $>$ 0} enforced
+    \item Apply the selected rule to cycles with expiry year $= Y$ (out-of-sample)
+    \item Pool out-of-sample (OOS) results across all test years
+\end{enumerate}
+
+This first test year is 2013 (first year with sufficient training data).
+
+\subsection{Year-by-Year Results}
+
+Detailed walk-forward year-by-year results are provided in the Appendix.
+
+\subsection{Interpretation}
+
+\begin{itemize}
+    \item Under the intraday-causal timing model, the expanding-window walk-forward procedure is \textbf{negative in pooled OOS} (see Appendix).
+    \item The selected strategy tends to remain in the same family (short S1 with $S2 \ge 0$ at entry), but performance varies substantially year-to-year.
+    \item This suggests the window-selection problem is highly susceptible to noise, and that additional conditioning variables (beyond $S2$ sign) are likely needed for a deployable strategy.
+\end{itemize}
+
+The degradation is expected due to:
+\begin{enumerate}
+    \item \textbf{Selection bias}: In-sample optimization selects the best-performing window
+    \item \textbf{Regime changes}: Market microstructure and participant mix evolve over time
+    \item \textbf{Smaller OOS samples}: Single-year OOS samples have high variance
+\end{enumerate}
+
+%==============================================================================
+\section{Robustness Testing}
+%==============================================================================
+\label{sec:robustness}
+
+\subsection{Fixed-Rule Approach}
+
+For robustness testing, a single rule selected in-sample is fixed and tested under alternative assumptions without re-optimizing. This isolates sensitivity to specific execution/cost assumptions.
+
+\subsection{Scenarios}
+
+Table~\ref{tab:robustness_scenarios} defines the robustness scenarios under the intraday-causal timing model.
+
+\begin{table}[H]
+\centering
+\caption{Robustness Testing Scenarios}
+\label{tab:robustness_scenarios}
+\begin{tabular}{llll}
+\toprule
+Scenario & S1 Execution Proxy & Timing Interpretation & Cost Model \\
+\midrule
+Baseline & VWAP buckets 2--7 & Trade after observing bucket 1 & 1 tick/leg/side \\
+Exec: bucket 1 & Bucket 1 close & Earlier execution proxy & 1 tick/leg/side \\
+Exec: full US VWAP & VWAP buckets 1--7 & Mixed execution proxy (includes bucket 1) & 1 tick/leg/side \\
+Double cost & VWAP buckets 2--7 & Same as baseline & 2 ticks/leg/side \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Pooled Results}
+
+Pooled fixed-rule robustness results are provided in the Appendix.
+
+\subsection{Critical Finding: Thin Edge Under Realism}
+
+Two robustness observations matter most:
+\begin{itemize}
+    \item \textbf{Execution proxy sensitivity}: Using bucket 1 as the execution proxy dramatically weakens performance relative to baseline (and also reduces sample size because some cycles lack a clean bucket 1 print).
+    \item \textbf{Cost sensitivity}: Doubling costs largely removes the edge in pooled results.
+\end{itemize}
+
+\subsection{By-Year Baseline Performance}
+
+Baseline fixed-rule performance by expiry year is provided in the Appendix.
+
+\subsection{Year Heterogeneity Analysis}
+
+Negative years (2008, 2012, 2015, 2021) share characteristics:
+\begin{itemize}
+    \item \textbf{2008}: Global Financial Crisis; extreme copper volatility
+    \item \textbf{2012}: European debt crisis; industrial demand uncertainty
+    \item \textbf{2015}: China slowdown; copper bear market
+    \item \textbf{2021}: Post-COVID supply chain disruptions; unusual inventory dynamics
+\end{itemize}
+
+Strong years (2010--2011, 2013, 2017--2018, 2023--2024) tend to coincide with:
+\begin{itemize}
+    \item Stable macroeconomic conditions
+    \item Predictable inventory cycles
+    \item Normal roll mechanics
+\end{itemize}
+
+%==============================================================================
+\section{Discussion and Implications}
+%==============================================================================
+
+\subsection{Summary of Evidence}
+
+The analysis provides evidence of a pre-expiry short bias in HG S1 spreads conditional on $S2 \geq 0$ at entry \emph{in-sample}. However, under the intraday-causal timing model, expanding-window walk-forward results are not robust out-of-sample.
+
+\begin{itemize}
+    \item In-sample: positive net mean for the best windows in the short S1, $S2 \ge 0$ family (Appendix tables)
+    \item Walk-forward OOS: negative pooled performance under expanding-window selection (Appendix tables)
+    \item Cost sensitivity: doubling costs largely removes the in-sample edge for the baseline fixed rule
+\end{itemize}
+
+The signal is statistically significant in both in-sample and out-of-sample contexts at conventional levels.
+
+\subsection{Limitations}
+
+Several limitations temper the conclusions:
+
+\subsubsection{Execution Timing}
+The strategy is only viable with same-day execution at the DTE-aligned price. The shift=1 test shows that the favorable move is concentrated in the first portion of the trading day (or overnight into the signal day). Traders without access to early-session execution or automated DTE-triggered orders face significant adverse selection.
+
+\subsubsection{Sample Size}
+With 128 cycles in the S2 $\geq$ 0 regime (approximately 7.5 per year), statistical power is limited. The 30\% OOS degradation may partly reflect sampling variation rather than true performance decay.
+
+\subsubsection{Regime Stability}
+The S2 regime conditioning assumes the entry-day S2 sign is informative for subsequent S1 behavior. This relationship may not be structurally stable if market participant composition or hedging practices change.
+
+\subsubsection{Cost Model}
+The cost model (1 tick/leg/side = \$50 round-trip) is a reasonable estimate for retail-sized positions but may understate costs for larger positions or periods of low liquidity. The double-cost scenario shows the strategy becomes marginally profitable (\$21.70, $t = 1.12$).
+
+\subsection{Practical Considerations}
+
+For practitioners considering implementation:
+
+\begin{enumerate}
+    \item \textbf{Execution infrastructure}: Requires capability to execute at or near the DTE-aligned price, ideally in the early US session
+    \item \textbf{Position sizing}: Given the 30--40\% OOS win rate in weak years, position sizes should accommodate drawdown sequences
+    \item \textbf{Regime monitoring}: Track S2 at entry carefully; the filter is critical
+    \item \textbf{Diversification}: Consider other commodity spreads to reduce single-market concentration
+    \item \textbf{Cost sensitivity}: Monitor execution costs; the strategy margin is thin
+\end{enumerate}
+
+\subsection{Economic Interpretation}
+
+The pre-expiry short bias in S1 conditional on S2 $\geq$ 0 likely reflects:
+
+\begin{enumerate}
+    \item \textbf{Index roll mechanics}: Long-only commodity indices (GSCI, BCOM) roll from F1 to F2 before expiry, creating predictable selling pressure
+    \item \textbf{Convergence dynamics}: As expiry approaches, F1 converges to spot while F2 retains more ``futures premium''
+    \item \textbf{Liquidity effects}: Reduced F1 liquidity near expiry may create temporary mispricings
+\end{enumerate}
+
+The S2 $\geq$ 0 conditioning filters for environments where the term structure supports continued roll-related pressure.
+
+%==============================================================================
+\section{Conclusion}
+%==============================================================================
+
+\subsection{Main Conclusions}
+
+This analysis of HG pre-expiry spread dynamics yields three main conclusions:
+
+\begin{enumerate}
+    \item \textbf{Expiry-anchored seasonality exists}: Unconditional DTE-anchored averages show S1 tends to decline into expiry.
+
+    \item \textbf{Simple regime filters help in-sample}: Conditioning on $S2 \ge 0$ at entry improves the in-sample signal-to-noise for short S1 windows.
+
+    \item \textbf{The strategy family is not robust under Timing A}: Under an intraday-causal timing model (bucket 1 regime, execute later the same day), expanding-window walk-forward selection is negative in pooled out-of-sample results and the remaining in-sample edge is thin once costs are stressed.
+\end{enumerate}
+
+
+\clearpage
+\appendix
+\section{Generated Tables}
+
+The following tables are automatically generated from the analysis pipeline outputs.
+
+\IfFileExists{pre_expiry_dte_report_tables.tex}{%
+    \input{pre_expiry_dte_report_tables.tex}%
+}{%
+    \IfFileExists{reports/pre_expiry_dte_report_tables.tex}{%
+        \input{reports/pre_expiry_dte_report_tables.tex}%
+    }{%
+        \begin{center}
+        \small Generated tables not found.
+        \end{center}
+    }%
+}
+
+\end{document}

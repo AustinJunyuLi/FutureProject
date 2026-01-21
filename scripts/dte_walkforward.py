@@ -36,8 +36,20 @@ def main() -> int:
     ap.add_argument("--symbol", default="HG", help="Commodity symbol")
     ap.add_argument("--start-year", type=int, default=2008)
     ap.add_argument("--end-year", type=int, default=2024)
-    ap.add_argument("--source", choices=["us_vwap", "bucket1"], default="us_vwap")
-    ap.add_argument("--execution-shift", type=int, default=0)
+    ap.add_argument(
+        "--s1-source",
+        choices=["rest_vwap", "us_vwap", "bucket1"],
+        default="rest_vwap",
+        help="S1 execution price source (baseline: rest_vwap = VWAP over buckets 2-7).",
+    )
+    ap.add_argument(
+        "--s2-source",
+        choices=["bucket1", "rest_vwap", "us_vwap"],
+        default="bucket1",
+        help="S2 signal source (baseline: bucket1 close).",
+    )
+    ap.add_argument("--s1-shift", type=int, default=0, help="Business-day shift for S1 execution price")
+    ap.add_argument("--s2-shift", type=int, default=0, help="Business-day shift for S2 signal")
     ap.add_argument("--entry-min", type=int, default=5)
     ap.add_argument("--entry-max", type=int, default=20)
     ap.add_argument("--exit-max", type=int, default=4)
@@ -55,8 +67,9 @@ def main() -> int:
     spread_panel = read_spread_panel(Path(args.data_dir), args.symbol)
     spread_panel["trade_date"] = pd.to_datetime(spread_panel["trade_date"])
 
-    cfg = DailySeriesConfig(source=args.source, execution_shift_bdays=args.execution_shift)
-    panel = build_strategy_panel(spread_panel, start_year=args.start_year, end_year=args.end_year, config=cfg)
+    s1_cfg = DailySeriesConfig(source=args.s1_source, execution_shift_bdays=args.s1_shift)
+    s2_cfg = DailySeriesConfig(source=args.s2_source, execution_shift_bdays=args.s2_shift)
+    panel = build_strategy_panel(spread_panel, start_year=args.start_year, end_year=args.end_year, s1_config=s1_cfg, s2_config=s2_cfg)
 
     entry_dtes = range(args.entry_min, args.entry_max + 1)
     exit_dtes = range(0, args.exit_max + 1)

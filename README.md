@@ -206,27 +206,26 @@ These scripts write plots/tables under the repo-level `output/` folder (gitignor
 
 ```bash
 # Seasonality plots (DTE-anchored)
-python scripts/expiry_seasonality.py --symbol HG --start-year 2008 --end-year 2024
+python scripts/expiry_seasonality.py --symbol HG --start-year 2008 --end-year 2024 --source rest_vwap --execution-shift 0
 
 # Window scan + heatmaps (S1, with S2 regimes)
-python scripts/dte_strategy_scan.py --symbol HG --start-year 2008 --end-year 2024
+python scripts/dte_strategy_scan.py --symbol HG --start-year 2008 --end-year 2024 --s1-source rest_vwap --s2-source bucket1 --s1-shift 0 --s2-shift 0
 
 # Regime-stratified event study (entry-day S2 regime; choose entry DTE)
-python scripts/dte_event_study.py --symbol HG --start-year 2008 --end-year 2024 --entry-dte 17
+python scripts/dte_event_study.py --symbol HG --start-year 2008 --end-year 2024 --entry-dte 18 --baseline-dte 18 --s1-source rest_vwap --s2-source bucket1 --s1-shift 0 --s2-shift 0
 
 # Walk-forward validation (expanding window by expiry year)
-python scripts/dte_walkforward.py --symbol HG --start-year 2008 --end-year 2024
+python scripts/dte_walkforward.py --symbol HG --start-year 2008 --end-year 2024 --s1-source rest_vwap --s2-source bucket1 --s1-shift 0 --s2-shift 0
 
 # Fixed-rule robustness (select baseline rule once, then stress execution)
-python scripts/dte_robustness.py --symbol HG --start-year 2008 --end-year 2024
+python scripts/dte_robustness.py --symbol HG --start-year 2008 --end-year 2024 --baseline-s1-source rest_vwap --baseline-s2-source bucket1 --baseline-cost-ticks 1
 
 # Build the LaTeX report tables (reads from output/, writes to reports/)
 python scripts/build_pre_expiry_report_tables.py
 
 # Compile the report without leaving build byproducts in reports/
 mkdir -p output/.latex_build
-pdflatex -interaction=nonstopmode -halt-on-error -output-directory output/.latex_build reports/pre_expiry_dte_report.tex
-pdflatex -interaction=nonstopmode -halt-on-error -output-directory output/.latex_build reports/pre_expiry_dte_report.tex
-cp output/.latex_build/pre_expiry_dte_report.pdf reports/pre_expiry_dte_report.pdf
+latexmk -pdf -interaction=nonstopmode -halt-on-error -outdir=output/.latex_build reports/hg_pre_expiry_dte_analysis.tex
+cp output/.latex_build/hg_pre_expiry_dte_analysis.pdf reports/hg_pre_expiry_dte_analysis.pdf
 rm -rf output/.latex_build
 ```
