@@ -1,15 +1,55 @@
 """File scanner for discovering and parsing futures data files.
 
 Scans directories for minute-level data files and extracts contract metadata.
+Directory mapping is loaded from ``config/commodities.yaml`` so that adding
+a new commodity requires zero code changes.
 """
 
-import os
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Iterator, Optional
 import re
 
+import yaml
+
 from ..utils.month_codes import parse_contract_code, ContractInfo
+
+
+# Default path for commodities config, relative to project root.
+_DEFAULT_COMMODITIES_PATH = Path(__file__).resolve().parents[3] / "config" / "commodities.yaml"
+
+
+def _load_dir_mapping(config_path: Path | str | None = None) -> dict[str, str]:
+    """Load symbol -> directory mapping from commodities YAML.
+
+    Returns a dict like ``{"HG": "copper", "CL": "crude_oil", ...}``.
+    Falls back to a hardcoded default if config is missing.
+    """
+    if config_path is None:
+        config_path = _DEFAULT_COMMODITIES_PATH
+    config_path = Path(config_path)
+
+    if config_path.exists():
+        with open(config_path) as f:
+            raw = yaml.safe_load(f)
+        commodities = raw.get("commodities", {})
+        return {
+            sym.upper(): info["directory"]
+            for sym, info in commodities.items()
+            if "directory" in info
+        }
+
+    # Hardcoded fallback for environments without config
+    return {
+        "HG": "copper",
+        "GC": "gold",
+        "SI": "silver",
+        "CL": "crude_oil",
+        "NG": "natural_gas",
+        "ZC": "corn",
+        "ZS": "soybeans",
+        "ZW": "wheat",
+    }
 
 
 @dataclass
@@ -39,18 +79,27 @@ class DataFile:
 
 
 class FileScanner:
-    """Scanner for futures data files."""
+    """Scanner for futures data files.
+
+    Parameters
+    ----------
+    root_dir : str | Path
+        Root directory containing commodity folders.
+    commodities_config : str | Path | None
+        Path to commodities YAML for directory mapping.
+        ``None`` uses the default ``config/commodities.yaml``.
+    """
 
     # Pattern: SYMBOL_MONTHYEAR_1min.txt (e.g., HG_F09_1min.txt)
     FILE_PATTERN = re.compile(r"^([A-Z]{2,4})_([FGHJKMNQUVXZ])(\d{2})_1min\.txt$")
 
-    def __init__(self, root_dir: str | Path):
-        """Initialize scanner.
-
-        Args:
-            root_dir: Root directory containing commodity folders
-        """
+    def __init__(
+        self,
+        root_dir: str | Path,
+        commodities_config: str | Path | None = None,
+    ):
         self.root_dir = Path(root_dir)
+        self._dir_mapping = _load_dir_mapping(commodities_config)
 
     def scan_commodity(self, commodity_dir: str | Path) -> list[DataFile]:
         """Scan a commodity directory for data files.
@@ -87,21 +136,13 @@ class FileScanner:
         Returns:
             List of DataFile objects
         """
-        # Map symbols to directory names
-        dir_mapping = {
-            "HG": "copper",
-            "GC": "gold",
-            "SI": "silver",
-            "CL": "crude_oil",
-            "NG": "natural_gas",
-            "ZC": "corn",
-            "ZS": "soybeans",
-            "ZW": "wheat",
-        }
-
-        dir_name = dir_mapping.get(symbol.upper())
+        dir_name = self._dir_mapping.get(symbol.upper())
         if dir_name is None:
-            raise ValueError(f"Unknown symbol: {symbol}")
+            raise ValueError(
+                f"Unknown symbol: {symbol}. "
+                f"Known symbols: {sorted(self._dir_mapping.keys())}. "
+                f"Add it to config/commodities.yaml."
+            )
 
         commodity_dir = self.root_dir / dir_name
         return self.scan_commodity(commodity_dir)
@@ -201,9 +242,7 @@ def discover_all_commodities(root_dir: str | Path) -> dict[str, list[DataFile]]:
     scanner = FileScanner(root_dir)
 
     result = {}
-    symbols = ["HG", "GC", "SI", "CL", "NG", "ZC", "ZS", "ZW"]
-
-    for symbol in symbols:
+    for symbol in sorted(scanner._dir_mapping.keys()):
         try:
             files = scanner.scan_symbol(symbol)
             if files:

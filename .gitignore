@@ -45,3 +45,12 @@ reports/*.pdf
 # OS
 .DS_Store
 Thumbs.db
+
+# GitHub Desktop duplicate clone
+FutureProject/
+
+# Local research papers
+Papers/
+
+# Claude Code config
+.claude/

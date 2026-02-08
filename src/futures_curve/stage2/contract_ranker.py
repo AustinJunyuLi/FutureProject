@@ -69,7 +69,7 @@ class ContractRanker:
         for c in contracts:
             try:
                 exp_utc = self.get_expiry_ts_utc(c)
-            except Exception:
+            except (ValueError, KeyError):
                 continue
             if exp_utc > as_of_utc:
                 eligible.append((exp_utc, c))
@@ -138,7 +138,7 @@ def build_curve_panel(
         try:
             exp_local = ranker.get_expiry_ts_local(c)
             exp_utc = ranker.get_expiry_ts_utc(c)
-        except Exception:
+        except (ValueError, KeyError):
             continue
         expiry_pairs.append((exp_utc.to_datetime64(), c, exp_local, exp_utc))
 

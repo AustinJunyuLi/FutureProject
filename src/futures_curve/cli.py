@@ -24,6 +24,44 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def validate_config(cfg: dict, symbols: list[str]) -> None:
+    """Validate pipeline configuration.
+
+    Checks that required keys are present and that each requested symbol
+    has an expiry rule configured.  Raises ``typer.BadParameter`` with a
+    clear message on failure.
+    """
+    # Required top-level keys
+    paths = cfg.get("paths")
+    if not paths:
+        raise typer.BadParameter("Config missing required 'paths' section")
+    for key in ("raw_data", "output_parquet", "metadata"):
+        if key not in paths:
+            raise typer.BadParameter(f"Config 'paths' section missing required key '{key}'")
+
+    # Validate symbols have expiry rules
+    from .stage0.expiry_schedule import _load_expiry_rules
+    rules = _load_expiry_rules()
+    missing = [s for s in symbols if s.upper() not in rules]
+    if missing:
+        raise typer.BadParameter(
+            f"No expiry rule configured for symbol(s): {', '.join(missing)}. "
+            f"Add them to config/expiry_rules.yaml. "
+            f"Configured symbols: {sorted(rules.keys())}"
+        )
+
+    # Validate symbols have directory mapping
+    from .stage1.file_scanner import _load_dir_mapping
+    dir_map = _load_dir_mapping()
+    missing_dirs = [s for s in symbols if s.upper() not in dir_map]
+    if missing_dirs:
+        raise typer.BadParameter(
+            f"No directory mapping for symbol(s): {', '.join(missing_dirs)}. "
+            f"Add them to config/commodities.yaml. "
+            f"Configured symbols: {sorted(dir_map.keys())}"
+        )
+
+
 @app.command()
 def run(
     config: str = typer.Option(
@@ -61,6 +99,9 @@ def run(
         stage_list = [int(s.strip()) for s in stages.split(",")]
     else:
         stage_list = [0, 1, 2]
+
+    # Validate config and symbols before starting
+    validate_config(cfg, symbols)
 
     raw_data_dir = cfg["paths"]["raw_data"]
     output_dir = cfg["paths"]["output_parquet"]

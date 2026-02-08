@@ -1,0 +1,60 @@
+# Commodity Configuration
+# Maps symbols to directory names, display names, and sector grouping.
+# Adding a new commodity requires only a new entry here (plus data and expiry rule).
+
+commodities:
+  HG:
+    directory: copper
+    name: Copper
+    exchange: CME
+    sector: metals
+    calendar: CMEGlobex_Metals
+
+  GC:
+    directory: gold
+    name: Gold
+    exchange: CME
+    sector: metals
+    calendar: CMEGlobex_Metals
+
+  SI:
+    directory: silver
+    name: Silver
+    exchange: CME
+    sector: metals
+    calendar: CMEGlobex_Metals
+
+  CL:
+    directory: crude_oil
+    name: Crude Oil
+    exchange: CME
+    sector: energy
+    calendar: CMEGlobex_Energy
+
+  NG:
+    directory: natural_gas
+    name: Natural Gas
+    exchange: CME
+    sector: energy
+    calendar: CMEGlobex_Energy
+
+  ZC:
+    directory: corn
+    name: Corn
+    exchange: CME
+    sector: agriculture
+    calendar: CMEGlobex_Agricultural
+
+  ZS:
+    directory: soybeans
+    name: Soybeans
+    exchange: CME
+    sector: agriculture
+    calendar: CMEGlobex_Agricultural
+
+  ZW:
+    directory: wheat
+    name: Wheat
+    exchange: CME
+    sector: agriculture
+    calendar: CMEGlobex_Agricultural

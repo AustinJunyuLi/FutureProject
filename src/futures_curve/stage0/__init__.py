@@ -16,6 +16,7 @@ from .contract_specs import (
     get_contract_spec,
     save_contract_specs,
     load_contract_specs,
+    load_specs_from_expiry_rules,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "get_contract_spec",
     "save_contract_specs",
     "load_contract_specs",
+    "load_specs_from_expiry_rules",
 ]

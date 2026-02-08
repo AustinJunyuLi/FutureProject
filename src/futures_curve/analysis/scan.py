@@ -7,19 +7,10 @@ import pandas as pd
 
 from .backtest import run_backtest_single_series
 from .config import AnalysisConfig
-from .costs import CostModel
 from .data import SpreadDailySeries
 from .types import StrategyResult
-from .strategies.carry import compute_annualized_carry_signal
+from .walk_forward import build_cost_model
 from .strategies.mean_reversion import MeanReversionParams, compute_dte_conditioned_zscore, positions_from_zscore
-
-
-def _base_cost_model_for_spread(series: SpreadDailySeries, config: AnalysisConfig) -> CostModel:
-    return CostModel(
-        dollars_per_tick=series.dollars_per_tick,
-        legs=2,
-        ticks_per_leg_per_side=config.ticks_per_leg_per_side,
-    )
 
 
 def scan_carry_strategy(
@@ -30,7 +21,7 @@ def scan_carry_strategy(
     direction_multipliers: list[int] = [1, -1],
 ) -> list[StrategyResult]:
     df = series.df
-    cost_model = _base_cost_model_for_spread(series, config)
+    cost_model = build_cost_model(series, config)
 
     s_pct = df["s_signal_pct"].astype("float64")
     spacing = (df["far_dte_bdays"] - df["near_dte_bdays"]).astype("float64")
@@ -79,7 +70,7 @@ def scan_mean_reversion_strategy(
     direction_multipliers: list[int] = [1, -1],
 ) -> list[StrategyResult]:
     df = series.df
-    cost_model = _base_cost_model_for_spread(series, config)
+    cost_model = build_cost_model(series, config)
 
     results: list[StrategyResult] = []
     for params in param_grid:

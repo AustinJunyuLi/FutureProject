@@ -8,9 +8,11 @@ import pandas as pd
 
 from futures_curve.analysis.config import AnalysisConfig
 from futures_curve.analysis.data import load_spreads_panel, build_daily_spread_series
+from futures_curve.analysis.params import CarryClippedParams, CarrySignParams
 from futures_curve.analysis.roll import RollFilterConfig, load_roll_shares_daily
-from futures_curve.analysis.strategies.mean_reversion import MeanReversionParams
-from futures_curve.analysis.walk_forward import walk_forward_carry, walk_forward_mean_reversion
+from futures_curve.analysis.strategies.carry import CarryClippedStrategy, CarrySignStrategy
+from futures_curve.analysis.strategies.mean_reversion import MeanReversionParams, MeanReversionStrategy
+from futures_curve.analysis.walk_forward import walk_forward, regime_pairs
 
 
 def _parse_args() -> argparse.Namespace:
@@ -56,30 +58,6 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _regime_pairs(regimes: list[str]) -> list[tuple[str, str]]:
-    # Translate a single list into (contango_mode, vol_mode) pairs while avoiding a full cross-product.
-    pairs: list[tuple[str, str]] = [("all", "all")]
-    for r in regimes:
-        r = r.strip()
-        if not r or r == "all":
-            continue
-        if r in {"contango_only", "backwardation_only"}:
-            pairs.append((r, "all"))
-        elif r in {"high_vol_only", "low_vol_only"}:
-            pairs.append(("all", r))
-        else:
-            raise ValueError(f"Unknown regime: {r}")
-    # Deduplicate while preserving order
-    out: list[tuple[str, str]] = []
-    seen = set()
-    for p in pairs:
-        if p in seen:
-            continue
-        seen.add(p)
-        out.append(p)
-    return out
-
-
 def main() -> None:
     args = _parse_args()
     out_dir = Path(args.out)
@@ -108,11 +86,25 @@ def main() -> None:
         use_smooth=True,
     )
 
-    regime_pairs = _regime_pairs(args.regimes.split(","))
+    filter_pairs = regime_pairs(args.regimes.split(","))
 
     carry_thresholds = [float(x) for x in args.carry_thresholds.split(",") if x.strip()]
     carry_scales = [float(x) for x in args.carry_scales.split(",") if x.strip()]
 
+    # Build carry strategy grids
+    sign_grid = [CarrySignParams(threshold=t) for t in carry_thresholds]
+    clipped_grid = [
+        CarryClippedParams(threshold=t, scale=s)
+        for t in carry_thresholds
+        for s in carry_scales
+        if s > 0
+    ]
+    carry_strategy_grids = [
+        (CarrySignStrategy(), sign_grid),
+        (CarryClippedStrategy(), clipped_grid),
+    ]
+
+    # Build MR param grid
     dte_bins = [int(x) for x in args.mr_dte_bin_sizes.split(",") if x.strip()]
     lookbacks = [int(x) for x in args.mr_lookbacks.split(",") if x.strip()]
     entry_zs = [float(x) for x in args.mr_entry_z.split(",") if x.strip()]
@@ -135,6 +127,8 @@ def main() -> None:
                             )
                         )
 
+    mr_strategy_grids = [(MeanReversionStrategy(), mr_grid)]
+
     carry_fold_rows: list[dict[str, object]] = []
     mr_fold_rows: list[dict[str, object]] = []
     summary_rows: list[dict[str, object]] = []
@@ -143,17 +137,16 @@ def main() -> None:
     for s in cfg.spreads:
         series = build_daily_spread_series(config=cfg, spreads_panel=panel, spread_num=s)
 
-        carry_out = walk_forward_carry(
+        carry_out = walk_forward(
             config=cfg,
             series=series,
             roll_daily=roll_daily,
             roll_filter_mode=args.roll_filter,
             roll_cfg=roll_cfg,
-            contango_vol_filter_pairs=regime_pairs,
+            contango_vol_filter_pairs=filter_pairs,
             first_test_year=args.first_test_year,
             last_test_year=args.last_test_year,
-            thresholds=carry_thresholds,
-            scales=carry_scales,
+            strategy_grids=carry_strategy_grids,
         )
         carry_fold_rows.extend([r.__dict__ for r in carry_out.folds])
         carry_by_spread[series.spread] = carry_out
@@ -170,16 +163,16 @@ def main() -> None:
             }
         )
 
-        mr_out = walk_forward_mean_reversion(
+        mr_out = walk_forward(
             config=cfg,
             series=series,
             roll_daily=roll_daily,
             roll_filter_mode=args.roll_filter,
             roll_cfg=roll_cfg,
-            contango_vol_filter_pairs=regime_pairs,
+            contango_vol_filter_pairs=filter_pairs,
             first_test_year=args.first_test_year,
             last_test_year=args.last_test_year,
-            param_grid=mr_grid,
+            strategy_grids=mr_strategy_grids,
         )
         mr_fold_rows.extend([r.__dict__ for r in mr_out.folds])
         summary_rows.append(

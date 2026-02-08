@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import numpy as np
 import pandas as pd
+
+from ..data import SpreadDailySeries
+from .base import BaseStrategy
 
 
 @dataclass(frozen=True)
@@ -93,3 +96,53 @@ def positions_from_zscore(
                 hold_days = 0
         pos.loc[t] = state
     return pos.fillna(0.0)
+
+
+class MeanReversionStrategy(BaseStrategy):
+    """DTE-conditioned z-score mean reversion with hysteresis entry/exit."""
+
+    @property
+    def name(self) -> str:
+        return "mean_reversion"
+
+    def generate_signal(
+        self,
+        series: SpreadDailySeries,
+        params: MeanReversionParams,
+        trading_days_per_year: int = 252,
+    ) -> pd.Series:
+        df = series.df
+        z = compute_dte_conditioned_zscore(df, params=params, value_col="s_signal_pct")
+        return z
+
+    def default_param_grid(self) -> list[MeanReversionParams]:
+        return [
+            MeanReversionParams(
+                dte_bin_size=b,
+                lookback_days=lb,
+                entry_z=ez,
+                exit_z=xz,
+                max_hold_days=mh,
+            )
+            for b in [5]
+            for lb in [504, 756]
+            for ez in [1.0, 1.25, 1.5, 1.75, 2.0]
+            for xz in [0.2, 0.3]
+            for mh in [10, 20]
+        ]
+
+    def positions_from_signal(
+        self, signal: pd.Series, params: MeanReversionParams
+    ) -> pd.Series:
+        # For MR, signal is the z-score; convert to positions via hysteresis.
+        return positions_from_zscore(
+            signal,
+            entry_z=params.entry_z,
+            exit_z=params.exit_z,
+            max_hold_days=params.max_hold_days,
+        )
+
+    def fold_params_dict(
+        self, params: MeanReversionParams, direction: int
+    ) -> dict[str, object]:
+        return {**asdict(params), "direction": direction}

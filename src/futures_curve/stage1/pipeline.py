@@ -108,7 +108,7 @@ class Stage1Pipeline:
 
                 contracts_processed += 1
 
-            except Exception as e:
+            except (ValueError, KeyError, pd.errors.EmptyDataError, OSError) as e:
                 print(f"    Error processing {data_file.contract}: {e}")
                 continue
 
