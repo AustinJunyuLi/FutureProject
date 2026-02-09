@@ -441,20 +441,5 @@ This analysis of HG spread strategy search yields three main conclusions:
     \item \textbf{Roll filtering is inconclusive}: Excluding roll windows does not uniformly improve performance and may hurt certain spreads; the optimal roll treatment is spread-dependent.
 \end{enumerate}
 
-\subsection{Next Steps}
-
-Immediate next steps to strengthen the analysis:
-
-\begin{enumerate}
-    \item \textbf{Stricter accounting}: Add a conservative out-of-sample accounting convention (carry forward cash during years with no eligible fold) to avoid optimistic stitched metrics.
-    
-    \item \textbf{Regime conditioning}: Cautiously expand regime conditioning (e.g., add roll-share-based windows, volatility regimes) and evaluate robustness under higher cost stress.
-    
-    \item \textbf{Execution realism}: Test bucket-level execution proxies (e.g., bucket 1 close) to assess sensitivity to execution timing.
-    
-    \item \textbf{Cross-market validation}: Extend the analysis to other base metals (AL, ZN, NI) to test whether the carry effect generalizes.
-    
-    \item \textbf{Multi-spread portfolio}: Evaluate a portfolio that trades multiple spreads simultaneously to reduce idiosyncratic risk.
-\end{enumerate}
 
 \end{document}
